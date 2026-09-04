@@ -227,13 +227,21 @@ export default function WebsiteQuery({
       alert("這筆缺少識別碼，無法確認。");
       return;
     }
+    // 兩顆覆核按鈕本來只有「回報誤判」會問（window.prompt 要輸入原因），
+    // 「加入黑名單」按下去就直接生效。但後者其實比較嚴重——它把一個網站
+    // 標成極高風險，而且按錯了要管理員才能改回來。兩邊的份量顛倒了。
+    if (!window.confirm(
+      `確認「${site.url}」是毒品網站？\n\n` +
+      "確認後這筆會標成「極高風險」並留下覆核紀錄。\n" +
+      "要改回來需要管理員權限。"
+    )) return;
     try {
       const response = await authFetch(`/api/crawler/result/${site.id}/confirm/`, {
         method: "POST",
       });
       if (!response.ok) throw new Error(await getErrorMessage(response));
       onReviewed?.();
-      await loadBuckets();
+      await loadBuckets(blackSearch, pendingSearch);
     } catch (requestError) {
       alert(requestError instanceof Error ? requestError.message : "確認失敗");
     }
@@ -344,11 +352,11 @@ export default function WebsiteQuery({
 
       const result = (await response.json()) as { message?: string };
       onReviewed?.();
-      void loadBuckets();
+      void loadBuckets(blackSearch, pendingSearch);
       setWhiteUrl("");
       setWhiteTitle("");
       setWhiteReason("");
-      await loadWhitelist();
+      await loadWhitelist(whiteSearch);
       alert(result.message || "白名單新增成功！");
     } catch (requestError) {
       const message = requestError instanceof Error
@@ -371,7 +379,7 @@ export default function WebsiteQuery({
       });
       if (!response.ok) throw new Error(await getErrorMessage(response));
 
-      await loadWhitelist();
+      await loadWhitelist(whiteSearch);
       alert("白名單刪除成功！");
     } catch (requestError) {
       const message = requestError instanceof Error
