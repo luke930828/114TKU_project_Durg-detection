@@ -69,13 +69,34 @@ def add_whitelist(data: WhitelistCreate, admin: database.User = Depends(get_curr
                 db=db, user_id=admin.user_id, action_type="清除白名單網域的殘留分析",
                 details=f"網域 {domain} 已在白名單（{already.url}），"
                         f"清除殘留的 {removed} 筆分析結果"[:500])
+        # 訊息要講清楚「你填的沒有被採用」。
+        #
+        # 這條路徑會直接 return，不建立新紀錄——但表單是強制填名稱與原因的，
+        # 使用者填完按下去，東西被默默丟掉，然後在清單上看到別人幾天前寫的
+        # 原因，會以為系統存錯了。實際回報過：「原因跟我填的不一樣」。
+        # 沉默地忽略使用者的輸入，比報錯還糟。
+        when = already.created_at.strftime("%Y-%m-%d") if already.created_at else "先前"
+        note = ""
+        if (data.title and data.title != already.title) or \
+           (data.reason and data.reason != already.reason):
+            note = ("　你這次填的名稱與原因沒有覆蓋原紀錄——"
+                    "白名單一個網域只留一筆，要修改內容請先移除舊的那筆再重加。")
         return {
             "status": "success",
-            "message": f"網域 {domain} 已經在白名單中（{already.url}）。"
-                       + (f"已清除殘留的 {removed} 筆待處理分析結果。" if removed
-                          else "沒有殘留的分析結果需要清除。"),
+            "message": f"網域 {domain} 已經在白名單中。"
+                       f"原本那筆是「{already.title or '未命名'}」，"
+                       f"原因「{already.reason or '未填'}」，"
+                       f"由 {already.added_by or '不明'} 於 {when} 加入。"
+                       + (f"　已清除殘留的 {removed} 筆待處理分析結果。" if removed
+                          else "　沒有殘留的分析結果需要清除。")
+                       + note,
             "removed": removed,
             "already": True,
+            "existing": {
+                "id": already.id, "url": already.url,
+                "title": already.title, "reason": already.reason,
+                "source": already.source, "added_by": already.added_by,
+            },
         }
         
     new_white = database.WhitelistWebsite(

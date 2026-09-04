@@ -400,8 +400,15 @@ export default function WebsiteQuery({
     const url = whiteUrl.trim();
     const title = whiteTitle.trim();
     const reason = whiteReason.trim();
-    if (!url || !title || !reason) {
-      alert("請完整填寫網址、標題與加入原因。");
+    // 只有網址是必填。
+    //
+    // 原本三個欄位都強制，但「這個網域已經在白名單了，我只是要清掉殘留的
+    // 待確認」這個情境下，名稱與原因根本不會被採用（後端會沿用既有那筆）——
+    // 強制填完再丟掉，使用者會以為自己填的被存錯了。
+    // 真的要新增時後端會擋：title/reason 是 schema 的必填欄位，送空字串進去
+    // 仍然建得起來，所以這裡給預設值而不是放行空值。
+    if (!url) {
+      alert("請填寫網址。");
       return;
     }
     if (hasMaliciousInput([url, title, reason])) {
@@ -414,7 +421,12 @@ export default function WebsiteQuery({
       const response = await authFetch("/api/whitelist/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, title, reason, source: whiteSource }),
+        body: JSON.stringify({
+          url,
+          title: title || "人工排除",
+          reason: reason || "承辦人員確認為正常網站",
+          source: whiteSource,
+        }),
       });
       if (!response.ok) throw new Error(await getErrorMessage(response));
 
