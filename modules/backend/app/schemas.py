@@ -122,6 +122,15 @@ class WebsiteReport(BaseModel):
     # 模型只讀前 256 個 token，1 MB 已經遠超過需要；再多只是佔資料庫。
     text_content: Optional[str] = Field(None, max_length=1_000_000)
 
+class ConfirmBatch(BaseModel):
+    """批次覆核要確認的分析結果 id。
+
+    上限 200 是配合待確認清單一頁最多 200 筆——使用者不可能選到比畫面上
+    更多的東西。不設上限的話，一個請求就能要求後端更新整張表（SEC-16）。
+    """
+    ids: List[int] = Field(..., min_length=1, max_length=200)
+
+
 class OCRDetectedText(BaseModel):
     """OCR 在一張圖上找到的一段文字。欄位名對齊 modules/yolo/app/ai_model/ocr.py。"""
     text: str = Field(..., max_length=500)

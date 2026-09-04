@@ -5,7 +5,7 @@ from sqlalchemy.orm import Session
 from typing import Optional
 import json
 import database
-from schemas import WebsiteReport
+from schemas import WebsiteReport, ConfirmBatch
 from dependencies import get_db, verify_admin, verify_internal_token, log_audit_action
 from utils import (calculate_multimodal_risk_100_scale, dispatch_to_ai_engines,
                    is_blacklisted, is_whitelisted, needs_review,
@@ -301,6 +301,65 @@ def confirm_result(result_id: int, db: Session = Depends(get_db),
     )
     return {"status": "success", "message": "已確認並移入黑名單",
             "id": row.id, "before": before, "after": row.risk_level}
+
+
+@router.post("/api/crawler/results/confirm-batch/",
+             summary="人工覆核：批次確認多筆為毒品網站")
+def confirm_results_batch(
+    payload: ConfirmBatch,
+    db: Session = Depends(get_db),
+    current_admin: database.User = Depends(get_current_user),
+):
+    """一次確認多筆。
+
+    為什麼要有這支，而不是讓前端迴圈打單筆
+    ────────────────────────────────────
+    待確認清單一頁最多 200 筆。前端迴圈的話就是 200 個 HTTP 請求、200 次
+    commit、200 筆稽核紀錄——慢，而且稽核日誌會被同一個動作洗版，之後要查
+    「那天發生什麼事」會很難讀。
+
+    這裡一次查、一次 commit、一筆稽核紀錄（記總數與網址樣本）。
+
+    只處理「還沒被確認過」的那些。已經是極高風險的略過不動，也不計入
+    confirmed——重複按不會產生假的統計數字。
+    """
+    ids = list(dict.fromkeys(payload.ids))      # 去重，保留順序
+    if not ids:
+        raise HTTPException(status_code=400, detail="沒有選取任何項目。")
+
+    rows = db.query(database.AIAnalysisResult).filter(
+        database.AIAnalysisResult.id.in_(ids)).all()
+    found = {row.id for row in rows}
+    missing = [i for i in ids if i not in found]
+
+    confirmed, skipped = [], []
+    for row in rows:
+        if row.risk_level == "極高風險":
+            skipped.append(row.id)
+            continue
+        row.risk_level = "極高風險"
+        confirmed.append(row.url)
+    db.commit()
+
+    # 一筆稽核紀錄。details 是 varchar(500)，網址只留前三個當樣本，
+    # 其餘用數量表示——重點是「誰、什麼時候、確認了幾筆」。
+    if confirmed:
+        sample = "、".join(u[:60] for u in confirmed[:3])
+        more = f" 等 {len(confirmed)} 筆" if len(confirmed) > 3 else ""
+        log_audit_action(
+            db, current_admin.user_id, "人工覆核確認（批次）",
+            f"批次確認 {len(confirmed)} 筆為毒品網站：{sample}{more}"[:500],
+        )
+
+    return {
+        "status": "success",
+        "message": f"已確認 {len(confirmed)} 筆"
+                   + (f"，{len(skipped)} 筆先前已確認" if skipped else "")
+                   + (f"，{len(missing)} 筆找不到" if missing else ""),
+        "confirmed": len(confirmed),
+        "skipped": len(skipped),
+        "missing": missing,
+    }
 
 
 @router.get("/api/crawler/result/{result_id}/image/",

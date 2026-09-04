@@ -108,6 +108,10 @@ export default function WebsiteQuery({
   // 順手把黑名單和白名單也篩掉，看起來像資料不見了。
   const [pendingSearch, setPendingSearch] = useState("");
   const [whiteSearch, setWhiteSearch] = useState("");
+  // 批次覆核的勾選。用 id 而不是 url——後端是用 ai_analysis_results.id 定位的，
+  // 而且同一個網域可能有多筆不同頁面。
+  const [selectedIds, setSelectedIds] = useState<number[]>([]);
+  const [batchSaving, setBatchSaving] = useState(false);
   const [remoteBlacklist, setRemoteBlacklist] = useState<PendingWebsite[]>([]);
   const [remoteBlacklistTotal, setRemoteBlacklistTotal] = useState(0);
   const [remotePending, setRemotePending] = useState<PendingWebsite[]>([]);
@@ -219,6 +223,62 @@ export default function WebsiteQuery({
       alert(result.message ?? "已回報誤判");
     } catch (requestError) {
       alert(requestError instanceof Error ? requestError.message : "回報失敗");
+    }
+  };
+
+  const selectableIds = remotePending
+    .map((site) => site.id)
+    .filter((id): id is number => typeof id === "number");
+  const allSelected =
+    selectableIds.length > 0 && selectedIds.length === selectableIds.length;
+
+  const toggleOne = (id: number) => {
+    setSelectedIds((prev) =>
+      prev.includes(id) ? prev.filter((x) => x !== id) : [...prev, id]);
+  };
+
+  const toggleAll = () => {
+    setSelectedIds(allSelected ? [] : selectableIds);
+  };
+
+  // 清單一變（搜尋、換頁、覆核後重載），把已經不在畫面上的勾選清掉。
+  // 不清的話會出現「已選 5 筆」但畫面上只看得到 2 筆的狀況——
+  // 使用者按下批次確認時，等於確認了三筆他看不到的東西。
+  useEffect(() => {
+    setSelectedIds((prev) => {
+      const visible = new Set(
+        remotePending.map((site) => site.id).filter((id) => typeof id === "number"));
+      const kept = prev.filter((id) => visible.has(id));
+      return kept.length === prev.length ? prev : kept;
+    });
+  }, [remotePending]);
+
+  const confirmSelectedAsBlacklist = async () => {
+    if (selectedIds.length === 0) return;
+    if (!window.confirm(
+      `確認這 ${selectedIds.length} 筆都是毒品網站？\n\n` +
+      "確認後會全部標成「極高風險」並留下一筆覆核紀錄。\n" +
+      "要改回來需要管理員權限。"
+    )) return;
+
+    setBatchSaving(true);
+    try {
+      const response = await authFetch("/api/crawler/results/confirm-batch/", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ ids: selectedIds }),
+      });
+      if (!response.ok) throw new Error(await getErrorMessage(response));
+      const result = (await response.json()) as { message?: string };
+      setSelectedIds([]);
+      onReviewed?.();
+      // 帶著搜尋條件重載，不要把使用者剛才篩出來的結果洗掉。
+      await loadBuckets(blackSearch, pendingSearch);
+      alert(result.message ?? "批次確認完成");
+    } catch (requestError) {
+      alert(requestError instanceof Error ? requestError.message : "批次確認失敗");
+    } finally {
+      setBatchSaving(false);
     }
   };
 
@@ -768,6 +828,47 @@ export default function WebsiteQuery({
               </div>
             ) : (
               <>
+              {/*
+                批次動作列。只在有東西可選的時候出現，不要在空清單上放一排
+                按不動的控制項。
+              */}
+              {selectableIds.length > 0 && (
+                <div className="flex flex-wrap items-center gap-3 rounded-lg border bg-white px-4 py-3">
+                  <label className="flex items-center gap-2 text-sm text-gray-700 cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={allSelected}
+                      onChange={toggleAll}
+                      className="w-4 h-4 accent-red-500"
+                    />
+                    全選本頁（{selectableIds.length} 筆）
+                  </label>
+
+                  {selectedIds.length > 0 && (
+                    <>
+                      <span className="text-sm text-gray-500">
+                        已選 <strong className="text-gray-800">{selectedIds.length}</strong> 筆
+                      </span>
+                      <button
+                        type="button"
+                        disabled={batchSaving}
+                        onClick={() => void confirmSelectedAsBlacklist()}
+                        className="bg-red-500 hover:bg-red-600 disabled:bg-gray-300 text-white px-4 py-2 rounded-lg text-sm ml-auto"
+                      >
+                        {batchSaving ? "處理中…" : `批次加入黑名單（${selectedIds.length}）`}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedIds([])}
+                        className="border px-3 py-2 rounded-lg text-sm text-gray-600 hover:bg-gray-50"
+                      >
+                        取消選取
+                      </button>
+                    </>
+                  )}
+                </div>
+              )}
+
               {remotePendingTotal > remotePending.length && (
                 <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                   共 <strong>{remotePendingTotal}</strong> 筆待確認，
@@ -778,6 +879,17 @@ export default function WebsiteQuery({
               {remotePending.map((site) => (
                 <div key={site.url} className="border border-amber-200 bg-amber-50/50 rounded-xl p-5">
                   <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
+                    <div className="flex min-w-0 gap-3">
+                      {/* 沒有 id 的那幾筆不能覆核（後端用 id 定位），所以也不給勾 */}
+                      {typeof site.id === "number" && (
+                        <input
+                          type="checkbox"
+                          checked={selectedIds.includes(site.id)}
+                          onChange={() => toggleOne(site.id as number)}
+                          className="mt-1 w-4 h-4 shrink-0 accent-red-500"
+                          aria-label={`選取 ${site.url}`}
+                        />
+                      )}
                     <div className="min-w-0">
                       <div className="flex flex-wrap items-center gap-2 mb-2">
                         <span className="bg-amber-500 text-white px-2.5 py-1 rounded-full text-xs font-medium">待確認</span>
@@ -786,6 +898,7 @@ export default function WebsiteQuery({
                       </div>
                       <p className="font-medium text-gray-800 break-all"><ExternalLink url={site.url} /></p>
                       <p className="text-xs text-gray-400 mt-2">辨識時間：{site.detectedAt}</p>
+                    </div>
                     </div>
                     <div className="flex gap-2 shrink-0">
                       <button
