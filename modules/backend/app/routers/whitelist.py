@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 import database
 from schemas import WhitelistCreate
 from dependencies import get_db, get_current_user, verify_admin, verify_super_admin, log_audit_action
-from utils import like_pattern
+from utils import like_pattern, registrable_domain, purge_analysis_for_domain, is_whitelisted
 
 router = APIRouter(tags=["白名單維護"])
 
@@ -43,14 +43,51 @@ def list_whitelist(
 # 👇 這裡把 verify_super_admin 換成了 verify_admin
 @router.post("/api/whitelist/", summary="新增白名單（一般人員可用）")
 def add_whitelist(data: WhitelistCreate, admin: database.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    existing = db.query(database.WhitelistWebsite).filter(database.WhitelistWebsite.url == data.url).first()
-    if existing:
-        raise HTTPException(status_code=400, detail="該網址已存在於白名單中。")
+    # 重複檢查要用「網域」，不能用「完全相同的網址」。
+    #
+    # 白名單實際上是用網域比對的（is_whitelisted），所以同一個網域只要換一個
+    # 路徑就能重複加進來——線上實際發生過：wooessential.com 有兩筆，
+    # 一筆是誤判回報的商品頁、一筆是手動加的另一個商品頁。清單會越來越髒，
+    # 而且刪掉其中一筆使用者會以為已經移出白名單，其實還被另一筆擋著。
+    #
+    # 反過來，原本的錯誤訊息也講不清楚狀況：使用者貼一個新網址進來，
+    # 看到「該網址已存在」會困惑——他明明沒加過這個網址。
+    domain = registrable_domain(data.url)
+    if not domain:
+        raise HTTPException(status_code=400, detail="網址格式無效，解析不出網域。")
+
+    already = is_whitelisted(db, data.url)
+    if already:
+        # 不報錯。使用者的意圖是「讓這個站不要再出現」，而它已經在白名單了——
+        # 該做的是把殘留的分析結果清掉，那才是他真正想要的結果。
+        # 早期版本加白名單不會清分析結果，所以線上有不少這種殘留
+        # （wooessential.com 已在白名單，卻還有 24 筆掛在待確認）。
+        removed = purge_analysis_for_domain(db, domain)
+        db.commit()
+        if removed:
+            log_audit_action(
+                db=db, user_id=admin.user_id, action_type="清除白名單網域的殘留分析",
+                details=f"網域 {domain} 已在白名單（{already.url}），"
+                        f"清除殘留的 {removed} 筆分析結果"[:500])
+        return {
+            "status": "success",
+            "message": f"網域 {domain} 已經在白名單中（{already.url}）。"
+                       + (f"已清除殘留的 {removed} 筆待處理分析結果。" if removed
+                          else "沒有殘留的分析結果需要清除。"),
+            "removed": removed,
+            "already": True,
+        }
         
     new_white = database.WhitelistWebsite(
         url=data.url, title=data.title, reason=data.reason,
         added_by=admin.account, source=data.source or "一般新增")
     db.add(new_white)
+
+    # 白名單是用網域比對的，加進來就代表「這個站是正常的」。所以要把該網域
+    # 既有的分析結果一起清掉，否則它們會一直留在待確認清單裡——那些分數是
+    # 「這個站可疑」算出來的，而人已經判定它不可疑。
+    removed = purge_analysis_for_domain(db, domain)
+
     db.commit()
     
     log_audit_action(

@@ -92,6 +92,14 @@ export default function WebsiteQuery({
   const [whiteUrl, setWhiteUrl] = useState("");
   const [whiteTitle, setWhiteTitle] = useState("");
   const [whiteReason, setWhiteReason] = useState("");
+  // 這次表單是從哪裡填的。
+  //
+  // 「AI 判過高風險、被人推翻」＝誤判回報，那是重訓模型要用的困難負樣本；
+  // 「人主動排除、AI 沒判過」＝一般新增。分界是資料的本質，不是操作路徑——
+  // 先前是用路徑分的（黑名單分頁按的算誤判、待確認分頁按的算一般新增），
+  // 但待確認裡的網站同樣是 AI 判高風險才會在那裡，記成「一般新增」等於
+  // 把誤判樣本混進「正常排除」，重訓時就分不出模型到底錯在哪。
+  const [whiteSource, setWhiteSource] = useState("一般新增");
   // 黑名單與待確認直接查後端。
   //
   // 以前這兩個清單是 App.tsx 的 useState，初始值還是寫死的假資料
@@ -406,7 +414,7 @@ export default function WebsiteQuery({
       const response = await authFetch("/api/whitelist/", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ url, title, reason }),
+        body: JSON.stringify({ url, title, reason, source: whiteSource }),
       });
       if (!response.ok) throw new Error(await getErrorMessage(response));
 
@@ -416,6 +424,7 @@ export default function WebsiteQuery({
       setWhiteUrl("");
       setWhiteTitle("");
       setWhiteReason("");
+      setWhiteSource("一般新增");
       await loadWhitelist(whiteSearch);
       alert(result.message || "白名單新增成功！");
     } catch (requestError) {
@@ -913,7 +922,9 @@ export default function WebsiteQuery({
                         onClick={() => {
                           setWhiteUrl(site.url);
                           setWhiteTitle("");
-                          setWhiteReason("經警員人工確認");
+                          setWhiteReason("經警員人工確認為誤判");
+                          // 從待確認過來的＝AI 判過高風險又被人推翻，算誤判回報
+                          setWhiteSource("誤判回報");
                           setTab("white");
                         }}
                         className="bg-green-500 hover:bg-green-600 text-white px-4 py-2.5 rounded-lg"

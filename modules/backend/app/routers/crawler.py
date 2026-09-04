@@ -9,7 +9,8 @@ from schemas import WebsiteReport, ConfirmBatch
 from dependencies import get_db, verify_admin, verify_internal_token, log_audit_action
 from utils import (calculate_multimodal_risk_100_scale, dispatch_to_ai_engines,
                    is_blacklisted, is_whitelisted, needs_review,
-                   like_pattern, registrable_domain)
+                   like_pattern, registrable_domain,
+                   purge_analysis_for_domain)
 import traceback
 
 router = APIRouter(tags=["自動爬蟲管理"])
@@ -260,16 +261,21 @@ def report_false_positive(
             source="誤判回報",
         ))
 
-    db.delete(row)
+    # 整個網域的分析結果一起清掉，不是只刪按下去的那一筆。
+    # 同一個站在待確認裡動輒四五十筆（實測 cathinonelabs.com 48 筆），
+    # 只刪一筆的話，使用者把站標成正常之後畫面上還掛著四十幾筆處理不掉的東西：
+    # 網域已經在白名單了，再按「回報誤判」也不會有新東西可加。
+    removed = purge_analysis_for_domain(db, domain)
     db.commit()
 
     log_audit_action(
         db, current_admin.user_id, "回報誤判",
-        f"回報 {url} 為誤判（原判定：{level}），網域 {domain} 已加入白名單。"
+        f"回報 {url} 為誤判（原判定：{level}），網域 {domain} 已加入白名單，"
+        f"一併清除 {removed} 筆分析結果。"
         f"{('原因：' + reason) if reason else ''}"[:500],
     )
     return {"status": "success", "id": result_id, "url": url, "domain": domain,
-            "before": level, "whitelisted": not bool(already),
+            "before": level, "whitelisted": not bool(already), "removed": removed,
             "message": f"已回報誤判，{domain} 已加入白名單" if not already
                        else f"已回報誤判，{domain} 原本就在白名單中"}
 

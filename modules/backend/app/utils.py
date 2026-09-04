@@ -207,6 +207,37 @@ def is_whitelisted(db, url: str):
     return None
 
 
+def purge_analysis_for_domain(db, domain: str) -> int:
+    """把某個網域底下所有的 AI 分析結果刪掉，回傳刪除筆數。
+
+    為什麼加了白名單就要清掉
+    ──────────────────────
+    白名單是用網域比對的，意思是「這個站是正常的，不要再判它」。但先前
+    只刪掉使用者按的那一筆，同網域其餘的還留在待確認清單裡——實測
+    cathinonelabs.com 在待確認有 48 筆、rocklandcannabisdispensary.com 45 筆。
+    使用者把站標成正常之後，畫面上還掛著 47 筆要他處理，而且處理不掉
+    （網域已經在白名單，再按也沒有新東西可加）。
+
+    留著也沒有意義：那些分數是「這個站可疑」算出來的，而人已經判定它不可疑。
+    下次爬蟲遇到這個網域會直接放行，不會重新產生。
+
+    先用 LIKE 粗篩再逐筆比對網域。單純 LIKE 會誤傷
+    （example.com.tw 會被 %example.com% 命中），而全表逐筆解析網域在
+    一萬多筆時太慢。
+    """
+    import database
+    if not domain:
+        return 0
+    candidates = db.query(database.AIAnalysisResult).filter(
+        database.AIAnalysisResult.url.like(f"%{domain}%", escape="\\")).all()
+    removed = 0
+    for row in candidates:
+        if registrable_domain(row.url) == domain:
+            db.delete(row)
+            removed += 1
+    return removed
+
+
 def is_blacklisted(db, url: str):
     """這個網址所屬的網域在不在人工黑名單裡。找到就回傳那一筆，否則 None。"""
     import database
