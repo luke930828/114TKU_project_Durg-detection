@@ -104,6 +104,10 @@ export default function WebsiteQuery({
   const [blackReason, setBlackReason] = useState("");
   const [blackSaving, setBlackSaving] = useState(false);
   const [blackSearch, setBlackSearch] = useState("");
+  // 三個清單的搜尋各自獨立。共用一個關鍵字的話，在待確認裡找一個網址會
+  // 順手把黑名單和白名單也篩掉，看起來像資料不見了。
+  const [pendingSearch, setPendingSearch] = useState("");
+  const [whiteSearch, setWhiteSearch] = useState("");
   const [remoteBlacklist, setRemoteBlacklist] = useState<PendingWebsite[]>([]);
   const [remoteBlacklistTotal, setRemoteBlacklistTotal] = useState(0);
   const [remotePending, setRemotePending] = useState<PendingWebsite[]>([]);
@@ -177,8 +181,16 @@ export default function WebsiteQuery({
   };
 
   // 搜尋兩邊都要帶到——使用者不會知道一個網址是人工加的還是 AI 判的。
+  const runPendingSearch = async () => {
+    await loadBuckets(blackSearch, pendingSearch);
+  };
+
+  const runWhiteSearch = async () => {
+    await loadWhitelist(whiteSearch);
+  };
+
   const runBlackSearch = async () => {
-    await Promise.all([loadManualBlacklist(blackSearch), loadBuckets(blackSearch)]);
+    await Promise.all([loadManualBlacklist(blackSearch), loadBuckets(blackSearch, pendingSearch)]);
   };
 
   const reportFalsePositive = async (site: PendingWebsite) => {
@@ -203,7 +215,7 @@ export default function WebsiteQuery({
       if (!response.ok) throw new Error(await getErrorMessage(response));
       const result = (await response.json()) as { message?: string };
       onReviewed?.();
-      await Promise.all([loadBuckets(blackSearch), loadWhitelist()]);
+      await Promise.all([loadBuckets(blackSearch, pendingSearch), loadWhitelist(whiteSearch)]);
       alert(result.message ?? "已回報誤判");
     } catch (requestError) {
       alert(requestError instanceof Error ? requestError.message : "回報失敗");
@@ -227,13 +239,14 @@ export default function WebsiteQuery({
     }
   };
 
-  const loadBuckets = useCallback(async (keyword = "") => {
+  const loadBuckets = useCallback(async (blackKeyword = "", pendingKeyword = "") => {
     setBucketLoading(true);
-    const q = keyword.trim() ? `&q=${encodeURIComponent(keyword.trim())}` : "";
+    const toQuery = (keyword: string) =>
+      keyword.trim() ? `&q=${encodeURIComponent(keyword.trim())}` : "";
     try {
       const [blackRes, pendingRes] = await Promise.all([
-        authFetch(`/api/crawler/automated_24h_list/?bucket=blacklist&limit=200${q}`),
-        authFetch("/api/crawler/automated_24h_list/?bucket=pending&limit=200"),
+        authFetch(`/api/crawler/automated_24h_list/?bucket=blacklist&limit=200${toQuery(blackKeyword)}`),
+        authFetch(`/api/crawler/automated_24h_list/?bucket=pending&limit=200${toQuery(pendingKeyword)}`),
       ]);
       if (blackRes.ok) {
         const payload = await blackRes.json();
@@ -268,10 +281,11 @@ export default function WebsiteQuery({
     void submitBlacklist();
   };
 
-  const loadWhitelist = useCallback(async () => {
+  const loadWhitelist = useCallback(async (keyword = "") => {
     setWhitelistLoading(true);
     try {
-      const response = await authFetch("/api/whitelist/");
+      const qs = keyword.trim() ? `?q=${encodeURIComponent(keyword.trim())}` : "";
+      const response = await authFetch(`/api/whitelist/${qs}`);
       if (!response.ok) throw new Error(await getErrorMessage(response));
 
       const payload = (await response.json()) as unknown;
@@ -486,7 +500,7 @@ export default function WebsiteQuery({
                   onClick={() => {
                     setBlackSearch("");
                     void loadManualBlacklist("");
-                    void loadBuckets("");
+                    void loadBuckets("", pendingSearch);
                   }}
                   className="border px-4 py-2.5 rounded-lg hover:bg-gray-50"
                 >
@@ -600,7 +614,7 @@ export default function WebsiteQuery({
               >
                 {whitelistSaving ? "新增中…" : "新增白名單"}
               </button>
-              <p className="mt-2 text-xs text-gray-500">此操作僅限最高管理員。</p>
+              <p className="mt-2 text-xs text-gray-500">新增後該網域底下所有頁面都會跳過檢測。刪除僅限管理員。</p>
             </div>
 
             {whitelistError && (
@@ -609,12 +623,43 @@ export default function WebsiteQuery({
               </div>
             )}
 
+            <div className="flex gap-2 mb-4">
+              <input
+                value={whiteSearch}
+                onChange={(event) => setWhiteSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void runWhiteSearch();
+                }}
+                className="border px-3 py-2.5 flex-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
+                placeholder="搜尋：網址、名稱或原因"
+              />
+              <button
+                type="button"
+                onClick={() => void runWhiteSearch()}
+                className="bg-gray-700 hover:bg-gray-800 text-white px-5 py-2.5 rounded-lg"
+              >
+                搜尋
+              </button>
+              {whiteSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setWhiteSearch("");
+                    void loadWhitelist("");
+                  }}
+                  className="border px-4 py-2.5 rounded-lg text-gray-600 hover:bg-gray-50"
+                >
+                  清除
+                </button>
+              )}
+            </div>
+
             <div className="space-y-3">
               {whitelistLoading ? (
                 <div className="py-12 text-center text-gray-400">正在取得白名單…</div>
               ) : whitelistEntries.length === 0 ? (
                 <div className="text-center text-gray-400 py-12 border-2 border-dashed rounded-xl">
-                  目前沒有白名單資料
+                  {whiteSearch ? "沒有符合的白名單" : "目前沒有白名單資料"}
                 </div>
               ) : (
                 (() => {
@@ -671,13 +716,47 @@ export default function WebsiteQuery({
 
         {tab === "pending" && (
           <div className="space-y-4">
+            <div className="flex gap-2 mb-4">
+              <input
+                value={pendingSearch}
+                onChange={(event) => setPendingSearch(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") void runPendingSearch();
+                }}
+                className="border px-3 py-2.5 flex-1 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-200"
+                placeholder="搜尋：網址或案件編號"
+              />
+              <button
+                type="button"
+                onClick={() => void runPendingSearch()}
+                className="bg-gray-700 hover:bg-gray-800 text-white px-5 py-2.5 rounded-lg"
+              >
+                搜尋
+              </button>
+              {pendingSearch && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setPendingSearch("");
+                    void loadBuckets(blackSearch, "");
+                  }}
+                  className="border px-4 py-2.5 rounded-lg text-gray-600 hover:bg-gray-50"
+                >
+                  清除
+                </button>
+              )}
+            </div>
             {bucketLoading ? (
               <div className="text-center text-gray-400 py-12">載入中…</div>
             ) : remotePending.length === 0 ? (
               <div className="text-center py-14 border-2 border-dashed border-gray-200 rounded-xl">
                 <Check className="w-10 h-10 text-green-500 mx-auto mb-3" />
-                <p className="font-medium text-gray-700">目前沒有待確認網站</p>
-                <p className="text-sm text-gray-400 mt-1">AI 發現可疑網站後會自動出現在這裡。</p>
+                <p className="font-medium text-gray-700">
+                  {pendingSearch ? "沒有符合的待確認網站" : "目前沒有待確認網站"}
+                </p>
+                <p className="text-sm text-gray-400 mt-1">
+                  {pendingSearch ? "換個關鍵字，或按「清除」看全部。" : "AI 發現可疑網站後會自動出現在這裡。"}
+                </p>
               </div>
             ) : (
               <>
