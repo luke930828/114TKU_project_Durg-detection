@@ -3,8 +3,8 @@
   "configurations": [
     {
       "name": "api-server",
-      "runtimeExecutable": "venv/Scripts/uvicorn.exe",
-      "runtimeArgs": ["main:app", "--reload", "--app-dir", "modules/yolo/app", "--reload-dir", "modules/yolo/app", "--host", "100.101.167.105", "--port", "5000"],
+      "runtimeExecutable": "venv/Scripts/python.exe",
+      "runtimeArgs": [".claude/run_yolo_dev.py"],
       "port": 5000,
       "url": "http://100.101.167.105:5000"
     }

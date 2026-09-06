@@ -15,6 +15,21 @@ OCR_LANGUAGES = ["ch_tra", "en"]  # 繁體中文 + 英文，包裝／標籤常�
 
 
 def load_ocr_reader(gpu: bool = True) -> "easyocr.Reader":
+    """建立 EasyOCR reader。
+
+    ⚠️ 關於 gpu 這個參數
+    ────────────────────
+    這裡原本的註解寫「刻意用 CPU，不跟 YOLO 搶 GPU：這張卡只有 4GB 顯存」。
+    那是在開發機上測到的結論，部署機器不是那樣：
+
+        NVIDIA GeForce RTX 5060 Ti   16,311 MiB   （實測 YOLO 跑著時只用 513 MiB）
+
+    而 CPU 模式在部署機器上是 8 秒一張，爬蟲一分鐘產出約 90 張，差 12 倍，
+    請求會在執行緒池裡積壓到容器被 OOM 砍掉（2026-09-03 實際發生）。
+
+    所以預設改成 GPU，由 OCR_USE_GPU 環境變數控制——顯存小的機器設 0 就會退回
+    CPU，行為跟以前一樣。
+    """
     if not gpu:
         # 🌟 CPU 模式下實測到的關鍵問題：torch 預設會用多執行緒（OpenMP）平行運算，
         # 單獨跑script時很快（~2秒），但放進 uvicorn 這種本身就有多執行緒/事件迴圈的伺服器背景任務裡，

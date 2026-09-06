@@ -10,14 +10,10 @@ ultralytics==8.4.24
 # uvicorn: 拿來啟動服務的，main.py 本身沒有 import，pipreqs 掃不到但一定要有
 uvicorn==0.47.0
 
-# torch / torchvision: ultralytics 的必要依賴，main.py 沒有直接 import 所以 pipreqs 也漏掉。
-# 這裡刻意釘一般 CPU 版本（不是我們本機測試機用的 +cu128 CUDA 版），
-# 因為 CUDA 版需要額外的 --index-url 才能裝，且大部分人 docker build 的機器不一定有 GPU passthrough。
-# 如果之後 Docker 部署的機器確定有 GPU 且有設定 nvidia-container-toolkit，
-# 再把這兩行換成 torch==2.10.0+cu128 / torchvision==0.25.0+cu128，
-# 並在 Dockerfile 的 pip install 加上 --index-url https://download.pytorch.org/whl/cu128
-torch==2.10.0
-torchvision==0.25.0
+# torch / torchvision 不在這個檔案裡，見 requirements-torch.txt。
+# 它們是 ultralytics 的必要依賴（main.py 沒有直接 import，所以 pipreqs 掃不到），
+# 但 GPU 版連帶的 CUDA 函式庫有 4.5 GB，跟其他套件放同一層的話，
+# 這個檔案改一行就要重抓四個小時。分開裝，那一層才不會被牽連。
 
 # easyocr: OCR 引擎（繁中+英文）。main.py 是透過 ai_model/ocr.py 間接用到，這裡要手動列。
 # ⚠️ 已知衝突：easyocr 會自己拉 opencv-python-headless 進來，跟上面釘的 opencv-python 搶同一個

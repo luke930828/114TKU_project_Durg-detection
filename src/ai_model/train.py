@@ -2,12 +2,14 @@
 YOLO 訓練腳本 (16 類別 / v2)
 
 用法：
-    python -m src.ai_model.train
+    python -m src.ai_model.train              # 從 base_model 開始全新訓練
+    python -m src.ai_model.train --resume      # 接續 runs/detect/<name>/weights/last.pt 繼續跑
 
 訓練資料預設讀 data/processed/data.yaml（由 src/ai_model/import_roboflow.py 匯入 Roboflow 標註產生）。
 訓練完成後，會自動把這次跑出來的 best.pt 複製到 models/best.pt —— 也就是 api_server.py 實際載入推論用的那份權重。
 """
 
+import argparse
 import os
 
 # 4GB 顯存的卡很容易因為記憶體碎片化在第一個 batch 就 ptxas/CUDA allocation 失敗，
@@ -46,6 +48,12 @@ class TrainConfig:
     deploy_dir: Path = Path("models")            # 最終權重要部署到哪個資料夾
     deploy_filename: str = "best.pt"             # api_server.py 實際載入的檔名
     low_sample_threshold: int = 100              # 訓練集裡樣本數低於此值的類別，開訓前會被列為警示
+    resume: bool = False                         # True 時接續 runs/detect/<name>/weights/last.pt 繼續跑，
+                                                  # 而不是從 base_model 重新開始（optimizer 狀態、LR 排程、epoch 計數都會照舊接續）
+
+
+def resolve_resume_checkpoint(config: TrainConfig) -> Path:
+    return Path("runs/detect") / config.name / "weights" / "last.pt"
 
 
 def describe_device(device: Union[int, str]) -> str:
@@ -118,8 +126,12 @@ def describe_batch(batch: Union[int, float]) -> str:
 
 def print_training_banner(config: TrainConfig) -> None:
     print("=" * 60)
-    print("🚀 [訓練啟動] 防毒影像辨識模型 - 16 類別訓練流程")
-    print(f"   基礎模型   : {config.base_model}")
+    if config.resume:
+        print("⏯️ [接續訓練] 防毒影像辨識模型 - 從上次中斷的地方繼續")
+        print(f"   接續檢查點 : {resolve_resume_checkpoint(config)}")
+    else:
+        print("🚀 [訓練啟動] 防毒影像辨識模型 - 16 類別訓練流程")
+        print(f"   基礎模型   : {config.base_model}")
     print(f"   訓練資料   : {config.data_yaml}")
     print(f"   Epochs     : {config.epochs} (patience={config.patience})")
     print(f"   Batch Size : {describe_batch(config.batch)}")
@@ -163,22 +175,47 @@ def train_model(config: TrainConfig = None) -> Path:
     print_training_banner(config)
     print_dataset_health_check(config)
 
-    model = YOLO(config.base_model)
+    # 接續訓練的重點：從「上次的 last.pt」載入模型，並用 resume=True 呼叫 train()。
+    # Ultralytics 會自動從該 checkpoint 存的 args.yaml 還原 data/epochs 等設定、
+    # optimizer 狀態、LR 排程進度、epoch 計數，只有下面這幾個參數可以在 resume 時覆寫
+    # （imgsz/batch/workers/device/patience 都在允許覆寫的白名單內，其餘傳了也會被忽略）。
+    if config.resume:
+        resume_checkpoint = resolve_resume_checkpoint(config)
+        if not resume_checkpoint.exists():
+            raise FileNotFoundError(
+                f"找不到可接續的訓練紀錄: {resume_checkpoint}\n"
+                f"請確認 TrainConfig.name（目前是 '{config.name}'）是不是跟上次中斷的實驗名稱一致，"
+                f"或把 resume 改回 False 從頭開始。"
+            )
+        model = YOLO(str(resume_checkpoint))
+    else:
+        model = YOLO(config.base_model)
+
     metrics = None
     interrupted = False
     try:
-        metrics = model.train(
-            data=config.data_yaml,
-            epochs=config.epochs,
-            patience=config.patience,
-            imgsz=config.imgsz,
-            batch=config.batch,
-            workers=config.workers,
-            device=config.device,
-            project=config.project,
-            name=config.name,
-            exist_ok=config.exist_ok,
-        )
+        if config.resume:
+            metrics = model.train(
+                resume=True,
+                imgsz=config.imgsz,
+                batch=config.batch,
+                workers=config.workers,
+                device=config.device,
+                patience=config.patience,
+            )
+        else:
+            metrics = model.train(
+                data=config.data_yaml,
+                epochs=config.epochs,
+                patience=config.patience,
+                imgsz=config.imgsz,
+                batch=config.batch,
+                workers=config.workers,
+                device=config.device,
+                project=config.project,
+                name=config.name,
+                exist_ok=config.exist_ok,
+            )
     except KeyboardInterrupt:
         # except 區塊只做最少的事（設旗標、印一行訊息）就馬上跳出去，
         # 部署動作統一放在 try/except 外面、不管有沒有被中斷都會執行——
@@ -203,5 +240,16 @@ def train_model(config: TrainConfig = None) -> Path:
     return final_weights_path
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="YOLO 訓練腳本 (16 類別 / v2)")
+    parser.add_argument(
+        "--resume",
+        action="store_true",
+        help="接續 runs/detect/<name>/weights/last.pt 繼續跑，而不是從 base_model 重新開始訓練",
+    )
+    return parser.parse_args()
+
+
 if __name__ == "__main__":
-    train_model()
+    args = parse_args()
+    train_model(TrainConfig(resume=args.resume))

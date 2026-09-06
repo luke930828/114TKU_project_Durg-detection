@@ -1,0 +1,26 @@
+# torch / torchvision 單獨一個檔案，Dockerfile 才能把它們裝在自己的一層。
+#
+# 為什麼要分開
+# ────────────
+# GPU 版 torch 會連帶拉進一整包 CUDA 執行期函式庫，實測總下載量 4.5 GB：
+#
+#     torch                917 MB     nvidia_cusparse      288 MB
+#     nvidia_cudnn         707 MB     nvidia_cusparselt    287 MB
+#     nvidia_cublas        594 MB     nvidia_cusolver      268 MB
+#     nvidia_nccl          322 MB     nvidia_cufft         193 MB
+#     triton               188 MB     nvidia_nvshmem       139 MB   …等等
+#
+# 而且來源是 download.pytorch.org 與 pypi.nvidia.com，從台灣連過去只有
+# 200～500 kB/s（同一時間 Cloudflare 測速是 14.6 MB/s，不是網路的問題）。
+# 4.5 GB 要跑三到四個小時。
+#
+# 如果跟其他套件放在同一個 pip install，只要有人在 requirements.txt 加一行
+# （例如這次加 easyocr），Docker 就會判定那一層失效，4.5 GB 全部重來——
+# 2026-09-03 實際發生過，等了一小時。分開之後這一層幾乎永遠命中快取。
+#
+# 換版本才動這個檔案，動了就要有心理準備重抓一次。
+#
+# 沒有 GPU 的機器：拿掉 +cu128，並把 Dockerfile 的 --extra-index-url 註解掉、
+# deploy/docker-compose.yml 的 yolo deploy 區塊也一起註解掉。
+torch==2.10.0+cu128
+torchvision==0.25.0+cu128
