@@ -8,7 +8,7 @@ import database
 from schemas import WebsiteReport, ConfirmBatch
 from dependencies import get_db, verify_admin, verify_internal_token, log_audit_action
 from utils import (calculate_multimodal_risk_100_scale, dispatch_to_ai_engines,
-                   is_blacklisted, is_whitelisted, needs_review,
+                   is_blacklisted, is_whitelisted,
                    like_pattern, registrable_domain,
                    purge_analysis_for_domain)
 import traceback

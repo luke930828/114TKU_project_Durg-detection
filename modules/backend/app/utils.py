@@ -56,9 +56,21 @@ def calculate_multimodal_risk_100_scale(nlp_raw_score: int, yolo_raw_score: int)
     return combined, risk_level
 
 
-def needs_review(nlp_raw_score: int, yolo_raw_score: int) -> bool:
-    """這筆要不要進人工覆核清單。分級規則只寫在這個檔案，避免又出現兩套標準。"""
-    return nlp_raw_score >= NLP_HIGH or yolo_raw_score >= NLP_HIGH
+# needs_review() 已移除。
+#
+# 它長這樣：
+#     return nlp_raw_score >= NLP_HIGH or yolo_raw_score >= NLP_HIGH
+#
+# docstring 寫「分級規則只寫在這個檔案，避免又出現兩套標準」，但它自己就是
+# 第二套——那個 or 正是實測後刪掉的「YOLO 單獨高分也送覆核」：
+#
+#     217 筆人工標註中，符合 yolo>=90 而 nlp<90 的有 14 筆
+#     真陽性 0 個，全部是加密貨幣報價、WordPress 外掛頁、護髮產品這類
+#     precision 0.772 → 0.706，recall 完全沒有改善（漏報一樣 3 個）
+#
+# 全專案沒有任何地方呼叫它，但名字取得像「就是這個」，下一個人很可能直接拿來
+# 用，那條刪掉的規則就會悄悄回來。要判斷等級請用
+# calculate_multimodal_risk_100_scale()，那是唯一的來源。
 
 
 # 服務之間的呼叫要重試
