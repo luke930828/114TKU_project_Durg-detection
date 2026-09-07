@@ -276,7 +276,7 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
             );
 
             console.log(
-              "⏳ 仍有 AI 引擎正在分析，繼續輪詢..."
+              "仍有 AI 引擎正在分析，繼續輪詢..."
             );
           } else {
             setAnalysisData(incomingData);

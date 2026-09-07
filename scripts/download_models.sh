@@ -40,7 +40,7 @@ while IFS='|' read -r name url expected desc; do
   # 已經有而且雜湊對得上 → 不重抓
   if [ -f "$target" ] && [ "$expected" != "請填入SHA256" ]; then
     if [ "$(sha_of "$target")" = "$expected" ]; then
-      echo "⏭  $name 已存在且校驗通過，跳過"
+      echo "$name 已存在且校驗通過，跳過"
       skipped=$((skipped + 1))
       continue
     fi
