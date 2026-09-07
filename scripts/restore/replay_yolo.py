@@ -20,6 +20,10 @@ import uuid
 import pymysql
 import requests
 
+# 這支腳本是在 backend 容器裡跑的，image_store 在 /app 底下。
+sys.path.insert(0, "/app")
+import image_store
+
 YOLO = os.getenv("YOLO_API_URL", "http://yolo:5000/api/v1/predict/trigger")
 LIMIT = int(os.getenv("REPLAY_LIMIT", "0"))          # 0 = 全部
 ONLY = os.getenv("REPLAY_URL", "")                   # 指定單一網址測試
@@ -69,10 +73,9 @@ def main():
             # 一次只把一筆的圖讀進來
             c.execute("SELECT url, images_data FROM suspect_websites WHERE id=%s", (sid,))
             url, blob = c.fetchone()
-            try:
-                pics = json.loads(blob or "[]")
-            except json.JSONDecodeError:
-                pics = []
+            # 遷移後 images_data 存的是檔案路徑，load_field 會讀檔還原成 base64；
+            # 還沒遷移的舊資料原樣回傳，兩種格式都吃。
+            pics = image_store.load_field(blob)
             if not pics:
                 continue
 

@@ -238,7 +238,7 @@ def get_audit_logs(
     """
     base = db.query(database.AuditLog).order_by(
         database.AuditLog.action_timestamp.desc(),
-        database.AuditLog.log_id.desc(),          # 同一秒內的順序才穩定
+        database.AuditLog.log_id.desc(),          # 時間戳相同時的保險，正常靠微秒就分得開
     )
     total = base.count()
     logs = base.offset((page - 1) * limit).limit(limit).all()
@@ -251,7 +251,9 @@ def get_audit_logs(
             "account": log.user.account if log.user else "未知或已刪除的使用者",
             "action": log.action_type,
             "details": log.details,
-            "time": log.action_timestamp.strftime("%Y-%m-%d %H:%M:%S") if log.action_timestamp else None
+            # 到微秒。稽核軌跡要能分辨同一秒內的先後——批次覆核一次就寫進好幾筆，
+            # 只到秒的話那幾筆看起來是同時發生的，排序也只能靠 log_id 猜。
+            "time": log.action_timestamp.strftime("%Y-%m-%d %H:%M:%S.%f") if log.action_timestamp else None
         } for log in logs],
         "pagination": {
             "total_count": total,

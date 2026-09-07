@@ -30,6 +30,7 @@ services:
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
       --default-time-zone=+08:00
+      --innodb-buffer-pool-size=1G
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
@@ -47,8 +48,15 @@ services:
     deploy:
       resources:
         limits:
-          # InnoDB buffer pool 預設會依主機記憶體長大，容器裡要自己框住
-          memory: 2G
+          # 要放得下 buffer pool（1G）加上連線緩衝與其他開銷。
+          #
+          # 之前是 2G，而 buffer pool 用的是 MySQL 的預設值 128 MB——
+          # 註解寫「預設會依主機記憶體長大」，那是誤解：MySQL 8 不會自己長，
+          # 沒設就是 128 MB。資料有 12.7 GB（suspect_websites 光圖片就 10.4 GB），
+          # 128 MB 的快取等於每次查詢都在打磁碟，實測 1.4 億次讀取有 8873 萬次
+          # 沒命中（62%）。同一個 count 冷的時候 3.5 秒、熱的時候 0.04 秒，
+          # 卡頓時有時無就是這樣來的。
+          memory: 3G
 
   # ---------------- 後端（統整中心）----------------
   backend:
@@ -83,10 +91,16 @@ services:
       YOLO_API_URL: ${YOLO_BASE_URL}/api/v1/predict/trigger
       CRAWLER_API_URL: ${CRAWLER_BASE_URL}/api/v1/crawl
       BACKEND_NLP_REPORT_URL: http://127.0.0.1:8000/api/nlp/report/
+      # 爬蟲抓到的商品圖存這裡，資料庫只留路徑（見 app/image_store.py）。
+      SUSPECT_IMAGE_DIR: /data/suspect_images
       HTTP_TIMEOUT: ${HTTP_TIMEOUT:-10}
       HTTP_RETRIES: ${HTTP_RETRIES:-2}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
       CORS_ORIGINS: ${CORS_ORIGINS:-*}
+    volumes:
+      # 蒐證用的商品圖。備份時這個 volume 要跟 mysqldump 一起帶走——
+      # 只備份其中一邊，還原回來的資料是壞的：紀錄會指向不存在的檔案。
+      - suspect-images:/data/suspect_images
     depends_on:
       mysql:
         condition: service_healthy
@@ -261,3 +275,4 @@ volumes:
   mysql-data:
   hf-cache:
   crawler-record:
+  suspect-images:

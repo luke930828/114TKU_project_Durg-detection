@@ -1,6 +1,6 @@
 """把卡在「影像分析中...」的網址，用原本存下來的圖片重新派給 YOLO。
 
-原始圖片還在 suspect_websites.images_data —— 爬蟲送來時後端就先落庫了，
+原始圖片還在 suspect_websites.images_data 指向的檔案裡 —— 爬蟲送來時後端就先存好了，
 派給 YOLO 只是另一條路徑。所以 YOLO 死掉那段時間掉的只是「分析結果」，
 不是「證據」，可以補跑。
 
@@ -9,10 +9,11 @@
     python backfill.py --limit 1          先跑一筆試
     python backfill.py --pace 6           每筆間隔 6 秒（控制 YOLO 的負載）
 """
-import argparse, json, os, sys, time
+import argparse, os, sys, time
 sys.path.insert(0, "/app")
 import requests
 import database
+import image_store
 
 ap = argparse.ArgumentParser()
 ap.add_argument("--limit", type=int, default=0)
@@ -36,11 +37,8 @@ rows = db.query(database.AIAnalysisResult, database.SuspectWebsite).join(
 
 targets = []
 for ai, sus in rows:
-    try:
-        images = json.loads(sus.images_data or "[]")
-    except Exception:
-        images = []
-    images = [i for i in images if isinstance(i, str) and i]
+    # load_field 新舊格式都吃：遷移後是檔案路徑，還沒遷移到的仍是 base64。
+    images = image_store.load_field(sus.images_data)
     if images:
         targets.append((ai.url, images))
 db.close()

@@ -1,14 +1,15 @@
 from dependencies import get_db, get_current_user
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
-from sqlalchemy import case, or_
+from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 from typing import Optional
 import json
 import database
+import image_store
 from schemas import WebsiteReport, ConfirmBatch
 from dependencies import get_db, verify_admin, verify_internal_token, log_audit_action
 from utils import (calculate_multimodal_risk_100_scale, dispatch_to_ai_engines,
-                   is_blacklisted, is_whitelisted,
+                   domain_sql_expr, is_blacklisted, is_whitelisted,
                    like_pattern, registrable_domain,
                    purge_analysis_for_domain)
 import traceback
@@ -52,7 +53,7 @@ def get_frontend_report(
         "class_metadata": r.class_metadata,
         "task_source": r.task_source,
         "created_at": r.created_at,
-        "has_representative_image": bool(r.representative_image_base64),
+        "has_representative_image": bool(r.representative_image_path or r.representative_image_base64),
     } for r in rows]
 
     return {
@@ -184,7 +185,10 @@ def receive_crawler_raw_data(
             elif isinstance(img_obj, str):
                 extracted_images.append(img_obj)
 
-        images_json_string = json.dumps(extracted_images, ensure_ascii=False) if extracted_images else "[]"
+        # 圖片寫成檔案，資料庫只留路徑。派給 AI 引擎的仍然是記憶體裡這份
+        # extracted_images，所以即時流程完全不受影響（見下面的 add_task）。
+        image_paths = image_store.save_many(extracted_images)
+        images_json_string = json.dumps(image_paths, ensure_ascii=False) if image_paths else "[]"
         keywords_str = ", ".join(report.keywords) if report.keywords else ""
 
         _upsert_suspect(
@@ -380,11 +384,57 @@ def get_result_image(result_id: int, db: Session = Depends(get_db),
         database.AIAnalysisResult.id == result_id).first()
     if not row:
         raise HTTPException(status_code=404, detail="找不到該筆分析結果")
+    # 回傳格式不變：前端拿到的仍然是 base64。
+    # 只是內容來源從資料庫欄位換成檔案——遷移期間兩種都可能有，
+    # 新資料在 representative_image_path，還沒搬的舊資料在 base64 欄位。
+    if row.representative_image_path:
+        image_b64 = image_store.load_base64(row.representative_image_path) or ""
+    else:
+        image_b64 = row.representative_image_base64 or ""
     return {
         "id": row.id,
-        "representative_image_base64": row.representative_image_base64 or "",
+        "representative_image_base64": image_b64,
         "representative_image_detections": row.representative_image_detections or [],
     }
+
+
+# 24 小時清單的網域分組
+#
+# 一個網域動輒幾十頁（實測 1091 個網域、19528 筆，很多站已經滿 50 筆），
+# 平鋪的話一頁 50 筆常常全部是同一個站，承辦人員要翻很久才看得到第二個網域。
+# 所以清單以網域為單位分頁，同網域的各個網頁收在該網域底下，點開才查。
+#
+# 網域從 url 直接用 SQL 算，不另外開欄位——這裡是顯示用的分組，
+# 跟白名單比對的 registrable_domain() 規則一致（小寫、去掉 www. 與埠號）就夠了。
+def _domain_expr():
+    # 規則只寫在 utils.domain_sql_expr 一個地方。這裡再寫一份的話，
+    # 兩邊遲早會不一致——清單分組看到的網域跟白名單清掉的網域對不起來。
+    return domain_sql_expr(database.AIAnalysisResult.url)
+
+
+# risk_level 是字串，排序要照「嚴重程度」而不是字典序。
+# 數字越小越嚴重，取 MIN 就是這個網域裡最嚴重的那一頁。
+def _severity_expr():
+    return case(
+        (database.AIAnalysisResult.risk_level == "極高風險", 0),
+        (database.AIAnalysisResult.risk_level == "高風險 (優先人工覆核)", 1),
+        (database.AIAnalysisResult.risk_level == "中風險 (建議人工覆核)", 2),
+        else_=3,
+    )
+
+
+_SEVERITY_TO_LEVEL = {
+    0: "極高風險",
+    1: "高風險 (優先人工覆核)",
+    2: "中風險 (建議人工覆核)",
+    3: "低風險",
+}
+
+_LEVEL_TO_STATUS = {
+    "極高風險": "Blocked",
+    "高風險 (優先人工覆核)": "Investigation",
+    "中風險 (建議人工覆核)": "Investigation",
+}
 
 
 @router.get("/api/crawler/automated_24h_list/", summary="獲取 24 小時自動爬蟲清單")
@@ -404,6 +454,12 @@ def get_automated_24h_results(
     ),
     q: Optional[str] = Query(None, max_length=200,
                              description="關鍵字搜尋：網址或案件編號"),
+    group: Optional[str] = Query(
+        None, pattern="^domain$",
+        description="group=domain 時以網域為單位回傳摘要，一個網域一筆"),
+    domain: Optional[str] = Query(
+        None, max_length=253,
+        description="只回傳這個網域底下的網頁（展開某個網域時用）"),
 ):
     
     base_query = db.query(database.AIAnalysisResult).filter(
@@ -432,6 +488,77 @@ def get_automated_24h_results(
             database.AIAnalysisResult.risk_level.in_(
                 ["高風險 (優先人工覆核)", "中風險 (建議人工覆核)"]))
 
+    # 展開某個網域：只留這個網域的網頁，其餘照原本的平鋪流程走
+    if domain and domain.strip():
+        target = domain.strip().lower()
+        if target.startswith("www."):
+            target = target[4:]
+        base_query = base_query.filter(_domain_expr() == target)
+
+    # 以網域為單位的摘要清單。分頁也是以網域為單位——不然同一個網域會被
+    # 切在好幾頁，摘要列上的頁數也會對不起來。
+    if group == "domain":
+        dom = _domain_expr().label("domain")
+        sev = _severity_expr()
+        grouped = base_query.with_entities(
+            dom,
+            func.count().label("page_count"),
+            func.max(database.AIAnalysisResult.risk_score).label("max_score"),
+            # 數字越小越嚴重，MIN 就是這個網域裡最嚴重的那一頁
+            func.min(sev).label("worst"),
+            func.max(database.AIAnalysisResult.created_at).label("latest"),
+        ).group_by(dom)
+
+        domain_total = grouped.count()
+
+        # 統計改成算「網域數」，跟清單的單位一致。
+        # 沿用原本的筆數統計的話，清單顯示 50 個網域、上面卻寫著幾千筆，對不起來。
+        sub = grouped.subquery()
+        sev_counts = dict(
+            db.query(sub.c.worst, func.count()).group_by(sub.c.worst).all())
+        d_high = sev_counts.get(0, 0)
+        d_med = sev_counts.get(1, 0) + sev_counts.get(2, 0)
+        d_low = sev_counts.get(3, 0)
+
+        rows = (grouped
+                .order_by(func.min(sev),
+                          func.max(database.AIAnalysisResult.risk_score).desc(),
+                          func.max(database.AIAnalysisResult.created_at).desc())
+                .offset((page - 1) * limit).limit(limit).all())
+
+        domain_data = []
+        for row in rows:
+            level = _SEVERITY_TO_LEVEL.get(int(row.worst), "低風險")
+            domain_data.append({
+                "domain": row.domain,
+                "page_count": row.page_count,
+                # 摘要列顯示這個網域「最嚴重的那一頁」，不是平均——
+                # 分流的目的是先看最該看的，平均會把一頁高分稀釋掉。
+                "risk_score": row.max_score,
+                "risk_level": level,
+                "status": _LEVEL_TO_STATUS.get(level, "Monitored"),
+                "discovered_date": row.latest.strftime("%Y-%m-%d") if row.latest else None,
+            })
+
+        return {
+            "status": "success",
+            "message": "成功獲取 24 小時自動爬蟲清單（以網域分組）",
+            "total_count": domain_total,
+            "stats": {
+                "total": domain_total,
+                "high": d_high,
+                "medium": d_med,
+                "low": d_low,
+            },
+            "pagination": {
+                "total_count": domain_total,
+                "current_page": page,
+                "limit": limit,
+                "total_pages": (domain_total + limit - 1) // limit if limit > 0 else 0,
+            },
+            "data": domain_data,
+        }
+
     # 統計也依 risk_level，不要再用 risk_score 自己切一套門檻
     total_count = base_query.count()
     high_risk_count = base_query.filter(
@@ -441,7 +568,16 @@ def get_automated_24h_results(
             ["高風險 (優先人工覆核)", "中風險 (建議人工覆核)"])).count()
     low_risk_count = total_count - high_risk_count - med_risk_count
     skip = (page - 1) * limit
-    if bucket == "pending":
+    if domain and domain.strip():
+        # 展開某個網域時，最嚴重的那幾頁要排最前面。
+        # 用預設的時間排序的話，摘要列寫著 100 分、點開卻是一排 62 分，
+        # 看的人會以為對不上——那一頁其實在第三頁。
+        order = [
+            _severity_expr(),
+            database.AIAnalysisResult.risk_score.desc(),
+            database.AIAnalysisResult.created_at.desc(),
+        ]
+    elif bucket == "pending":
         # 高風險排在中風險前面（"高" < "中" 的字典序剛好相反，所以明寫順序），
         # 同一級再依分數高到低。人力有限時要先看最該看的。
         order = [
@@ -491,7 +627,8 @@ def get_automated_24h_results(
             # page 20 是 9.9 MB，而 page 1、3 只有 24 KB（那幾頁剛好沒圖）。
             # API 本身都在 0.3 秒內，慢的是傳輸和瀏覽器解碼幾十張 base64。
             # 改成只回一個布林值，圖由 /api/crawler/result/{id}/image/ 按需取。
-            "has_representative_image": bool(ai_record.representative_image_base64),
+            "has_representative_image": bool(ai_record.representative_image_path
+                                             or ai_record.representative_image_base64),
             # ocr_results 不回傳。前端不顯示 OCR——圖片裡的文字是拿去餵 NLP、
             # 影響風險分數本身（utils.py 的 analyze_ocr_text_with_nlp），
             # 不是多一個給人看的區塊。回傳它只是讓每一頁的 payload 白白變大。
