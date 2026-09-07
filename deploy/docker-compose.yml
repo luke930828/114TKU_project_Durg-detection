@@ -49,13 +49,8 @@ services:
       resources:
         limits:
           # 要放得下 buffer pool（1G）加上連線緩衝與其他開銷。
-          #
-          # 之前是 2G，而 buffer pool 用的是 MySQL 的預設值 128 MB——
-          # 註解寫「預設會依主機記憶體長大」，那是誤解：MySQL 8 不會自己長，
-          # 沒設就是 128 MB。資料有 12.7 GB（suspect_websites 光圖片就 10.4 GB），
-          # 128 MB 的快取等於每次查詢都在打磁碟，實測 1.4 億次讀取有 8873 萬次
-          # 沒命中（62%）。同一個 count 冷的時候 3.5 秒、熱的時候 0.04 秒，
-          # 卡頓時有時無就是這樣來的。
+          # buffer pool 一定要明寫：MySQL 8 不會依主機記憶體自動長大，
+          # 沒設就是預設的 128 MB，快取放不下資料就會每次查詢都打磁碟。
           memory: 3G
 
   # ---------------- 後端（統整中心）----------------
@@ -204,6 +199,11 @@ services:
       # 空間很夠。顯存小的機器設 0 會退回 CPU——但 CPU 模式 8 秒一張，
       # 追不上爬蟲的產出，那時要一起調整 OCR 的取樣數量。
       OCR_USE_GPU: ${OCR_USE_GPU:-1}
+      # 限制 glibc 的 arena 數量並調低 trim 門檻，讓它積極一點把記憶體還給
+      # 作業系統。註：實測這不是本服務記憶體漲不回去的原因（malloc_trim 只還得出
+      # 0.8 MB），真正的原因是執行緒池，見 main.py 的 THREADPOOL_SIZE。
+      MALLOC_ARENA_MAX: "2"
+      MALLOC_TRIM_THRESHOLD_: "131072"
     volumes:
       # 權重放宿主機，不進 image 也不進 git
       - ${MODEL_DIR:-../models}:/models:ro
@@ -222,22 +222,10 @@ services:
               device_ids: ["0"]
               capabilities: [gpu]
         limits:
-          # 這個數字一定要小於 .wslconfig 的 memory（目前 12GB）。
-          #
-          # 原本寫 12G，跟整台 WSL 虛擬機一樣大——那等於沒有上限：cgroup 永遠
-          # 不會先觸發，容器可以一路吃到整台機器沒東西為止，最後由核心用
-          # 「全域 OOM」收場。全域 OOM 會隨便挑一個行程砍，旁邊的東西一起遭殃。
-          #
-          # 2026-09-03 實際發生：加了 EasyOCR 之後 yolo 從 5 GB 漲到 8 GB，
-          #   15:59:57  anon-rss 8.4 GB  global_oom  被砍
-          #   16:05:37  anon-rss 7.7 GB  global_oom  被砍（重啟後 5 分半又漲回去）
-          #   16:10:36  anon-rss 7.6 GB  global_oom  被砍 → Docker Desktop 的
-          #                                          WSL 整合一起崩掉，六個服務全停
-          # 對照同一份 log 裡 9/2 的 Chrome：constraint=CONSTRAINT_MEMCG，
-          # 碰到自己的上限、只砍自己、其他人沒事——那才是我們要的失敗方式。
-          #
-          # 6G 是「其他容器實際用量（mysql 0.4 + backend 0.2 + nlp 1.1 +
-          # crawler 峰值 5）加上 VM 本身」之後剩得下的量。
+          # 這個數字一定要小於 .wslconfig 的 memory，而且要留得下其他容器。
+          # 設成跟整台虛擬機一樣大等於沒有上限：cgroup 永遠不會先觸發，
+          # 最後由核心的全域 OOM 收場——那會隨便挑一個行程砍，旁邊的一起遭殃。
+          # 我們要的是碰到自己的上限、只砍自己。
           memory: 6G
 
   # ---------------- 前端 ----------------

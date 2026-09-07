@@ -53,10 +53,8 @@ class AuditLog(Base):
     
     # 舊寫法（勿用）：default=datetime.utcnow
     #
-    # 精確到微秒（fsp=6）。稽核軌跡是數位證據，「誰先誰後」有時候就是關鍵，
-    # 而一秒內可以發生很多次操作——批次覆核一次就寫進好幾筆。
-    # 取值一定要用 NOW(6)：MySQL 的 NOW() 只給到秒，欄位就算開了微秒
-    # 也只會存進 .000000。
+    # 精確到微秒：稽核軌跡是數位證據，一秒內可以發生很多次操作。
+    # 取值一定要用 NOW(6)，NOW() 只給到秒，欄位開了微秒也只會存進 .000000。
     action_timestamp = Column(MySQLDateTime(fsp=6), default=func.now(6))
     
     details = Column(String(500), nullable=True)
@@ -153,17 +151,12 @@ _PENDING_COLUMNS = [
 ]
 
 
-# 既有欄位要「改型別」時登記在這裡。
-#
-# create_all 不會 ALTER 已存在的表，而上面的 _PENDING_COLUMNS 只加新欄位、
-# 不會動既有欄位的型別。理由跟那邊一樣：靠「請組員記得手動下 SQL」一定有人漏掉。
+# 既有欄位要「改型別」時登記在這裡。上面的 _PENDING_COLUMNS 只加新欄位，
+# 理由跟那邊一樣：靠「請組員記得手動下 SQL」一定有人漏掉。
 #
 # (表名, 欄位名, 目標 DDL, MySQL 回報的 COLUMN_TYPE)
-#
-# 最後那個欄位要填 MySQL 自己在 information_schema 裡回報的字串（小寫），
-# 不能用 SQLAlchemy inspector 的型別——它的 str() 是 "DATETIME"，
-# 不帶 fsp，拿來比對永遠不相等，結果每次啟動都重跑一次 ALTER，
-# 而 MODIFY COLUMN 會整張表重建。
+# 最後那個要填 information_schema 裡的字串（小寫），不能用 SQLAlchemy 的型別——
+# 它的 str() 不帶 fsp，比對永遠不相等，會變成每次啟動都重建整張表。
 _PENDING_COLUMN_TYPES = [
     # 稽核時間改成微秒精度，見 AuditLog.action_timestamp 的說明。
     ("audit_logs", "action_timestamp", "DATETIME(6) NULL", "datetime(6)"),

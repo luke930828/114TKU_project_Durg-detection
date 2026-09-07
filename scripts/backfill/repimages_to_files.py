@@ -1,12 +1,8 @@
 """把 ai_analysis_results.representative_image_base64 搬成檔案。
 
-跟 images_to_files.py 同一套機制，差別在這批圖是「前端會顯示」的代表圖，
-所以搬完 API 回傳格式必須完全不變——crawler.py 的 /result/{id}/image/
-改成從檔案讀出來再轉回 base64，前端一行都不用改。
-
-實測讀檔比讀資料庫還快（中位 0.23 ms vs 0.37 ms），因為省掉了 InnoDB 的
-頁面管理與 off-page blob 指標。真正的收穫是資料庫從 2.3 GB 掉到 400 MB 上下，
-整個資料庫終於放得進 1 GB 的 buffer pool。
+跟 images_to_files.py 同一套機制，差別在這批是前端會顯示的代表圖，
+所以 API 回傳格式必須完全不變——crawler.py 的 /result/{id}/image/ 改成
+從檔案讀出來再轉回 base64，前端不用改。
 
 一樣是先寫檔、確認讀得回來、才清欄位，中途中斷不會壞。
 

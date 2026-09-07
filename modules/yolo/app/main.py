@@ -412,10 +412,112 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                     del BATCH_MEMORY[batch_id]
                     print(f"[記憶體清理] 已成功釋放批次 {batch_id} 的緩存空間。")
         else:
-            print(f"⏳ 任務 {task_id} 處理完畢，目前累計 {current_progress} 張圖，等待其餘圖片到齊中...")
+            print(f"任務 {task_id} 處理完畢，目前累計 {current_progress} 張圖，等待其餘圖片到齊中...")
             
     except Exception as e:
         print(f"[錯誤] 背景處理或回報失敗: {str(e)}")
+
+# FastAPI 執行緒池大小。同步的路由與 BackgroundTasks 都跑在這個池子裡，
+# 預設 40 條，而每條執行緒第一次碰 CUDA 都會配置自己的 host 端資源、
+# 跟著執行緒活著不還——RSS 會一路漲到所有執行緒都用過為止。
+# 推論本來就被 OCR_SEMAPHORE 序列化成一次一張，開那麼多條沒有好處。
+THREADPOOL_SIZE = int(os.getenv("THREADPOOL_SIZE", "4"))
+
+
+@app.on_event("startup")
+async def _limit_threadpool():
+    try:
+        import anyio.to_thread
+        anyio.to_thread.current_default_thread_limiter().total_tokens = THREADPOOL_SIZE
+        print(f"執行緒池上限設為 {THREADPOOL_SIZE} 條")
+    except Exception as err:
+        print(f"設定執行緒池上限失敗（{err}），沿用預設值。")
+
+
+class OCROnlyRequest(BaseModel):
+    image_base64: str
+
+
+@app.post("/api/v1/ocr")
+def ocr_only(req: OCROnlyRequest):
+    """只跑 OCR，同步回傳結果，不回報也不寫任何資料。
+
+    /api/v1/predict/trigger 是射後不理的，會在批次收齊時自動寫進資料庫；
+    做離線評估時不能用那支，否則評估本身就改動了正式資料。
+    走 OCR_SEMAPHORE，跟正式流程共用同一個序列化閘門。
+    """
+    if ocr_reader is None:
+        raise HTTPException(status_code=503, detail="OCR 引擎未載入")
+    try:
+        # 用跟正式流程同一支解碼函式，去掉 data URI 前綴、空白等處理才會一致
+        img, _ = decode_base64_to_cv2(req.image_base64, "ocr_only")
+    except Exception as err:
+        raise HTTPException(status_code=400, detail=f"圖片解碼失敗：{err}")
+    if img is None:
+        raise HTTPException(status_code=400, detail="圖片解碼失敗")
+
+    with OCR_SEMAPHORE:
+        texts = extract_texts(ocr_reader, downscale_for_ocr(img))
+    return {"detected_texts": texts}
+
+
+@app.get("/debug/memory")
+async def debug_memory(trim: bool = False):
+    """記憶體診斷。用來分辨「真的有物件沒釋放」還是「配置器不還給作業系統」。
+
+    兩者從外面看一樣（RSS 漲上去就不下來），處理方式卻相反。
+    trim=true 會呼叫 malloc_trim(0)，前後的 rss_mb 差多少就是配置器留著沒還的量。
+
+    一定要 async，理由同 /health：同步的 def 會排在推論後面。
+    """
+    import ctypes
+    import gc
+    import resource
+
+    def rss_mb():
+        with open("/proc/self/status") as fh:
+            for line in fh:
+                if line.startswith("VmRSS:"):
+                    return int(line.split()[1]) / 1024
+        return None
+
+    before = rss_mb()
+    trimmed = None
+    if trim:
+        try:
+            ctypes.CDLL("libc.so.6").malloc_trim(0)
+            trimmed = round(before - rss_mb(), 1)
+        except Exception as err:
+            trimmed = f"malloc_trim 失敗：{err}"
+
+    # BATCH_MEMORY 是最可能累積的地方：沒收齊的批次會一直留著圖。
+    batch_bytes = 0
+    for data in BATCH_MEMORY.values():
+        img = data.get("best_display_image_base64")
+        if img:
+            batch_bytes += len(img)
+        batch_bytes += sum(len(t) for t in data.get("ocr_texts", []) if isinstance(t, str))
+
+    info = {
+        "rss_mb": round(rss_mb(), 1),
+        "rss_mb_before_trim": round(before, 1) if trim else None,
+        "malloc_trim_released_mb": trimmed,
+        "peak_rss_mb": round(resource.getrusage(resource.RUSAGE_SELF).ru_maxrss / 1024, 1),
+        "batches_pending": len(BATCH_MEMORY),
+        "batch_held_mb": round(batch_bytes / 1024 / 1024, 2),
+        "gc_counts": gc.get_count(),
+        "gc_tracked_objects": len(gc.get_objects()),
+        "threads": threading.active_count(),
+    }
+    try:
+        import torch
+        if torch.cuda.is_available():
+            info["cuda_allocated_mb"] = round(torch.cuda.memory_allocated() / 1024 / 1024, 1)
+            info["cuda_reserved_mb"] = round(torch.cuda.memory_reserved() / 1024 / 1024, 1)
+    except Exception:
+        pass
+    return info
+
 
 # 7. 健康檢查：讓 docker-compose 之類的編排工具知道這個模組是不是真的活了（模型有沒有載完）
 @app.get("/health")
