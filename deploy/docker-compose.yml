@@ -8,23 +8,47 @@ services:
   mysql:
     image: mysql:8.0
     restart: unless-stopped
+    ulimits:
+      # 不要產生 core dump。WSL 的 core_pattern 是 |/wsl-capture-crash，
+      # 導向管線時核心不套用大小上限——Chromium 崩一次就寫出 172 GB
+      # （2026-08-31，370 MB/s；8/29 那次是 191.7 GB）。
+      # 管線模式下 RLIMIT_CORE=0 是特例，核心會直接跳過不 dump。
+      core: 0
     environment:
-      MYSQL_ROOT_PASSWORD: ${DB_PASSWORD}
+      TZ: Asia/Taipei
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:-${DB_PASSWORD}}
       MYSQL_DATABASE: ${DB_NAME:-drug_prevention_db}
+      # 應用程式專用帳號，權限只到這一個資料庫。
+      # 以前 backend 直接用 root——連線資訊一旦外洩，整個 MySQL 實例
+      # （含其他資料庫、mysql.user）都跟著暴露。
+      # ⚠️ MYSQL_USER/PASSWORD 只在「資料庫第一次建立」時生效。
+      #    既有安裝要自己建，見 README-docker.md。
+      MYSQL_USER: ${DB_USER:-drugapp}
+      MYSQL_PASSWORD: ${DB_PASSWORD}
     # 中文標題、關鍵字都靠這兩個參數，漏掉會變亂碼
     command: >
       --character-set-server=utf8mb4
       --collation-server=utf8mb4_unicode_ci
+      --default-time-zone=+08:00
     volumes:
       - mysql-data:/var/lib/mysql
     healthcheck:
-      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${DB_PASSWORD}"]
+      # 用 TCP 檢查而不是 socket。MySQL 初始化時會先跑一個 --skip-networking
+      # 的暫時伺服器，那時 socket 通了但 TCP 還沒開——healthcheck 過了，
+      # backend 卻連不上。要檢查的是「客戶端真正會用的那條路」。
+      test: ["CMD", "mysqladmin", "ping", "-h", "127.0.0.1", "--protocol=TCP",
+             "-u", "root", "-p${DB_ROOT_PASSWORD:-${DB_PASSWORD}}"]
       interval: 10s
       timeout: 5s
       retries: 10
       start_period: 40s
     # 不 publish 3306：只有 backend 需要連，走內部網路就好。
     # 真的要用 Workbench 看資料時再暫時打開。
+    deploy:
+      resources:
+        limits:
+          # InnoDB buffer pool 預設會依主機記憶體長大，容器裡要自己框住
+          memory: 2G
 
   # ---------------- 後端（統整中心）----------------
   backend:
@@ -32,16 +56,33 @@ services:
       context: ../modules/backend
       dockerfile: Dockerfile
     restart: unless-stopped
+    ulimits:
+      # 不要產生 core dump。WSL 的 core_pattern 是 |/wsl-capture-crash，
+      # 導向管線時核心不套用大小上限——Chromium 崩一次就寫出 172 GB
+      # （2026-08-31，370 MB/s；8/29 那次是 191.7 GB）。
+      # 管線模式下 RLIMIT_CORE=0 是特例，核心會直接跳過不 dump。
+      core: 0
     environment:
+      TZ: Asia/Taipei
       DB_HOST: mysql
       DB_PORT: "3306"
       DB_USER: ${DB_USER:-root}
       DB_PASSWORD: ${DB_PASSWORD}
       DB_NAME: ${DB_NAME:-drug_prevention_db}
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY}
+      # 第一個管理員的初始密碼。留空的話 main.py 會隨機產生一組並印在啟動 log，
+      # 只出現那一次——要指定就在 .env.local 設 ADMIN_INITIAL_PASSWORD。
+      ADMIN_INITIAL_PASSWORD: ${ADMIN_INITIAL_PASSWORD:-}
       NLP_BASE_URL: ${NLP_BASE_URL}
       YOLO_BASE_URL: ${YOLO_BASE_URL}
       CRAWLER_BASE_URL: ${CRAWLER_BASE_URL}
       BACKEND_SELF_URL: http://127.0.0.1:8000
+      # 目前 app/utils.py、app/routers/scan.py 實際讀的是這幾個變數名稱
+      # （不是上面的 *_BASE_URL），從同一組 .env 值組出完整端點
+      NLP_PREDICT_URL: ${NLP_BASE_URL}/predict
+      YOLO_API_URL: ${YOLO_BASE_URL}/api/v1/predict/trigger
+      CRAWLER_API_URL: ${CRAWLER_BASE_URL}/api/v1/crawl
+      BACKEND_NLP_REPORT_URL: http://127.0.0.1:8000/api/nlp/report/
       HTTP_TIMEOUT: ${HTTP_TIMEOUT:-10}
       HTTP_RETRIES: ${HTTP_RETRIES:-2}
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
@@ -52,15 +93,31 @@ services:
     ports:
       # 開著方便直接看 /docs 測 API，正式跑可以拿掉讓前端 proxy 就好
       - "127.0.0.1:8000:8000"
+    deploy:
+      resources:
+        limits:
+          # 背景派發會把整批 base64 圖片讀進記憶體，沒上限的話單一請求就能吃光
+          memory: 2G
 
   # ---------------- 爬蟲 ----------------
   crawler:
+    # Chromium 用 /dev/shm 做渲染程序間的共享記憶體，Docker 預設只給 64 MB。
+    # 吃滿時渲染程序會帶著 SIGTRAP 崩掉——2026-08-29 / 08-31 / 09-02 三次
+    # 磁碟災難的源頭都是這個崩潰（傾印檔最大 244 GB）。
+    shm_size: 1gb
     build:
       context: ../modules/crawler
       dockerfile: Dockerfile
     restart: unless-stopped
+    ulimits:
+      # 不要產生 core dump。WSL 的 core_pattern 是 |/wsl-capture-crash，
+      # 導向管線時核心不套用大小上限——Chromium 崩一次就寫出 172 GB
+      # （2026-08-31，370 MB/s；8/29 那次是 191.7 GB）。
+      # 管線模式下 RLIMIT_CORE=0 是特例，核心會直接跳過不 dump。
+      core: 0
     environment:
-      # ⚠️ 這幾個目前這個模組還沒真的讀，位址是寫在 app/config.json 的
+      TZ: Asia/Taipei
+      #  這幾個目前這個模組還沒真的讀，位址是寫在 app/config.json 的
       # webhook_settings.backend_url，換環境要手動改那個檔案
       BACKEND_BASE_URL: http://backend:8000
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
@@ -73,6 +130,14 @@ services:
       backend:
         condition: service_healthy
     profiles: ["full"]
+    deploy:
+      resources:
+        limits:
+          # 保險絲：撐爆時只殺這個容器，不要拖垮整台機器。
+          # 3G 太緊——實測記憶體大戶是 Playwright 的 Chromium 而不是記錄檔，
+          # 五分鐘內在 0.43 ~ 2.75 GB 之間起伏，摸到 3G 的 92%。
+          # 記錄檔改成 JSONL 也不會讓這個數字下降，那是兩件事。
+          memory: 5G
 
   # ---------------- NLP 引擎 ----------------
   nlp:
@@ -80,7 +145,14 @@ services:
       context: ../modules/nlp
       dockerfile: Dockerfile
     restart: unless-stopped
+    ulimits:
+      # 不要產生 core dump。WSL 的 core_pattern 是 |/wsl-capture-crash，
+      # 導向管線時核心不套用大小上限——Chromium 崩一次就寫出 172 GB
+      # （2026-08-31，370 MB/s；8/29 那次是 191.7 GB）。
+      # 管線模式下 RLIMIT_CORE=0 是特例，核心會直接跳過不 dump。
+      core: 0
     environment:
+      TZ: Asia/Taipei
       MODEL_ID: ${MODEL_ID:-matt0513/drug-detection-xlm-roberta}
       BACKEND_BASE_URL: http://backend:8000
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
@@ -91,6 +163,11 @@ services:
       backend:
         condition: service_healthy
     profiles: ["full"]
+    deploy:
+      resources:
+        limits:
+          # XLM-RoBERTa 載入後常駐約 2~3 GB，留一倍餘裕
+          memory: 6G
 
   # ---------------- YOLO 引擎 ----------------
   yolo:
@@ -98,10 +175,21 @@ services:
       context: ../modules/yolo
       dockerfile: Dockerfile
     restart: unless-stopped
+    ulimits:
+      # 不要產生 core dump。WSL 的 core_pattern 是 |/wsl-capture-crash，
+      # 導向管線時核心不套用大小上限——Chromium 崩一次就寫出 172 GB
+      # （2026-08-31，370 MB/s；8/29 那次是 191.7 GB）。
+      # 管線模式下 RLIMIT_CORE=0 是特例，核心會直接跳過不 dump。
+      core: 0
     environment:
+      TZ: Asia/Taipei
       BACKEND_BASE_URL: http://backend:8000
       MODEL_PATH: /models/best.pt
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      # EasyOCR 跑在 GPU 上。這台是 RTX 5060 Ti / 16 GB，YOLO 只用 513 MiB，
+      # 空間很夠。顯存小的機器設 0 會退回 CPU——但 CPU 模式 8 秒一張，
+      # 追不上爬蟲的產出，那時要一起調整 OCR 的取樣數量。
+      OCR_USE_GPU: ${OCR_USE_GPU:-1}
     volumes:
       # 權重放宿主機，不進 image 也不進 git
       - ${MODEL_DIR:-../models}:/models:ro
@@ -109,7 +197,9 @@ services:
       backend:
         condition: service_healthy
     profiles: ["full"]
-    # GPU：需要 nvidia-container-toolkit。沒 GPU 就把整段 deploy 刪掉。
+    # requirements.txt 已經是 GPU 版 torch（+cu128），部署機器要有 NVIDIA GPU +
+    # nvidia-container-toolkit，沒有的話這個服務會啟動失敗——把整段 deploy 刪掉，
+    # 並把 requirements.txt 的 torch/torchvision 換回不帶 +cu128 的版本。
     deploy:
       resources:
         reservations:
@@ -118,10 +208,34 @@ services:
               device_ids: ["0"]
               capabilities: [gpu]
         limits:
-          memory: 12G
+          # ⚠️ 這個數字一定要小於 .wslconfig 的 memory（目前 12GB）。
+          #
+          # 原本寫 12G，跟整台 WSL 虛擬機一樣大——那等於沒有上限：cgroup 永遠
+          # 不會先觸發，容器可以一路吃到整台機器沒東西為止，最後由核心用
+          # 「全域 OOM」收場。全域 OOM 會隨便挑一個行程砍，旁邊的東西一起遭殃。
+          #
+          # 2026-09-03 實際發生：加了 EasyOCR 之後 yolo 從 5 GB 漲到 8 GB，
+          #   15:59:57  anon-rss 8.4 GB  global_oom  被砍
+          #   16:05:37  anon-rss 7.7 GB  global_oom  被砍（重啟後 5 分半又漲回去）
+          #   16:10:36  anon-rss 7.6 GB  global_oom  被砍 → Docker Desktop 的
+          #                                          WSL 整合一起崩掉，六個服務全停
+          # 對照同一份 log 裡 9/2 的 Chrome：constraint=CONSTRAINT_MEMCG，
+          # 碰到自己的上限、只砍自己、其他人沒事——那才是我們要的失敗方式。
+          #
+          # 6G 是「其他容器實際用量（mysql 0.4 + backend 0.2 + nlp 1.1 +
+          # crawler 峰值 5）加上 VM 本身」之後剩得下的量。
+          memory: 6G
 
   # ---------------- 前端 ----------------
   frontend:
+    ulimits:
+      # 不要產生 core dump。WSL 的 core_pattern 是 |/wsl-capture-crash，
+      # 導向管線時核心不套用大小上限——Chromium 崩一次就寫出 172 GB
+      # （2026-08-31，370 MB/s；8/29 那次是 191.7 GB）。
+      # 管線模式下 RLIMIT_CORE=0 是特例，核心會直接跳過不 dump。
+      core: 0
+    environment:
+      TZ: Asia/Taipei      # nginx 的 access log 也用本機時間
     build:
       context: ../modules/frontend
       dockerfile: Dockerfile
@@ -133,6 +247,15 @@ services:
         condition: service_healthy
     ports:
       - "8080:80"
+      # 80 給 Let's Encrypt 的 HTTP-01 驗證與 HTTPS 轉址，443 給正式流量。
+      # 憑證還沒申請下來時 443 上沒有東西在聽，那是預期的。
+      - "80:80"
+      - "443:443"
+    volumes:
+      # 憑證放宿主機，不進 image 也不進 git（deploy/certs 已在 .gitignore）
+      - ./certs:/etc/nginx/certs:ro
+      # ACME 驗證用的暫存目錄，certbot 寫、nginx 讀
+      - ./acme-challenge:/var/www/certbot
 
 volumes:
   mysql-data:

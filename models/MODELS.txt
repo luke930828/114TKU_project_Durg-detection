@@ -11,8 +11,11 @@
 #   3. sha256sum best.pt 拿到雜湊值，貼到下面
 #   4. 發布後複製檔案網址貼到下面
 
-best.pt|https://github.com/luke930828/114TKU_project_Drug-detection/releases/download/v1.0.0/best.pt|請填入SHA256|YOLO 主模型（GPU 版）
-best.onnx|https://github.com/luke930828/114TKU_project_Drug-detection/releases/download/v1.0.0/best.onnx|請填入SHA256|YOLO ONNX 版（CPU 也能跑，公開下載版用這個）
+best.pt|https://github.com/luke930828/114TKU_project_Drug-detection/releases/download/v1.0.0/best.pt|22fff57f805d638486b35f1d633bcabb764158d7f456fcf0432cb8f1b5653678|YOLO 主模型（16 類毒品相關物品偵測，自訓練）
+yolo11n.pt|https://github.com/luke930828/114TKU_project_Drug-detection/releases/download/v1.0.0/yolo11n.pt|0ebbc80d4a7680d14987a577cd21342b65ecfd94632bd9a8da63ae6417644ee1|YOLO11 nano 官方預訓練權重（ultralytics 依賴，非自訓練）
+
+# ⚠️ 網址還沒真的建過 Release，現在是佔位——上傳流程照上面第 1-4 步做完，
+# 網址就會是對的；SHA256 已經照本機這兩個檔案算好了，不用重算。
 
 # NLP 微調模型已經放在 Hugging Face Hub，不用透過這份清單下載，程式裡直接：
 #   AutoModelForSequenceClassification.from_pretrained("matt0513/drug-detection-xlm-roberta")

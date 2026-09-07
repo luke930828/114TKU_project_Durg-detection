@@ -1,0 +1,86 @@
+name: Tests
+
+# 每次 push 與 PR 都跑。這個 workflow 存在的理由是防止「修好的東西默默退回去」——
+# 這個專案已經發生過一次：BUG-01 的風險分級門檻在後端修好了，
+# 前端還藏著第三套自己重算的邏輯，整整一輪都沒人發現。
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 準備 CI 用的環境變數
+        run: |
+          # .env.local 裡是真的密碼，不會進版控。CI 自己產一份用完就丟的，
+          # 每次都不一樣，避免有人把 CI 的值誤當成可用的憑證。
+          cat > .env.ci <<CONF
+          # 應用程式用權限受限的帳號，root 密碼另外一組——CI 要跟正式環境
+          # 一樣的權限模型，不然 SEC-21 的測試在 CI 上等於沒驗。
+          DB_USER=drugapp
+          DB_PASSWORD=$(openssl rand -hex 16)
+          DB_ROOT_PASSWORD=$(openssl rand -hex 16)
+          DB_NAME=drug_prevention_db
+          JWT_SECRET_KEY=$(openssl rand -hex 32)
+          INTERNAL_API_TOKEN=$(openssl rand -hex 16)
+          NLP_BASE_URL=http://nlp:8000
+          YOLO_BASE_URL=http://yolo:5000
+          CRAWLER_BASE_URL=http://crawler:8001
+          HTTP_TIMEOUT=10
+          HTTP_RETRIES=2
+          VITE_API_BASE_URL=/api
+          CORS_ORIGINS=http://localhost:8080
+          MODEL_DIR=../models
+          MODEL_ID=matt0513/drug-detection-xlm-roberta
+          CONF
+
+      - name: 安裝測試相依
+        run: |
+          python -m venv .venv
+          .venv/bin/pip install -q -r tests/requirements-test.txt
+
+      - name: 起測試環境
+        run: make test-up ENV_FILE=.env.ci
+
+      - name: 跑測試
+        # 資安測試的已知漏洞是 xfail，不會讓 CI 變紅；
+        # 整合測試失敗才代表模組間的介面契約真的斷了。
+        run: make test-integration ENV_FILE=.env.ci
+
+      - name: 產生資安稽核報告
+        if: always()
+        run: make test-security ENV_FILE=.env.ci
+
+      - name: 保留報告
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-report
+          path: tests/report/SECURITY_REPORT.md
+          if-no-files-found: warn
+
+      - name: 服務起不來時把 log 印出來
+        if: failure()
+        run: make logs ENV_FILE=.env.ci || true
+
+      - name: 收拾
+        if: always()
+        run: make test-down ENV_FILE=.env.ci || true
+
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 部署前檢查（秘密、大檔、寫死的 IP）
+        run: make check

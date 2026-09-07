@@ -39,12 +39,13 @@ services:
       target: build          # 停在 build 階段，不進 nginx
     command: npm run dev -- --host 0.0.0.0 --port 5173
     volumes:
-      - ../modules/frontend/src:/app/src
-      - ../modules/frontend/public:/app/public
+      - ../modules/frontend/app/src:/app/src
+      - ../modules/frontend/app/public:/app/public
       # 這行很重要：讓容器用自己的 node_modules，
       # 不要被宿主機（可能是 Windows 裝的）覆蓋掉
       - /app/node_modules
     ports:
       - "5173:80"
     environment:
-      VITE_API_BASE_URL: http://localhost:8000
+      # vite.config.ts 的 dev server proxy 讀這個，轉給 backend 容器
+      VITE_API_BASE_URL: http://backend:8000

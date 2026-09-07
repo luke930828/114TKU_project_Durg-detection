@@ -1,9 +1,9 @@
 __pycache__/
-*.py[cod]
+*.pyc
 .venv/
 venv/
-.git
-.env
-.env.*
-!.env.*.example
-*.log
+
+# 權重不進 image，deploy/docker-compose.yml 用 volume 掛 ../models 到 /models，
+# MODEL_PATH 環境變數指過去；main.py 的 fallback 預設值才會用到這裡的 app/models/
+app/models/*.pt
+

@@ -30,7 +30,16 @@ async def _start_manual_browser(config: Dict[str, Any]) -> tuple[Optional[Playwr
     pw = await async_playwright().start()
     browser = await pw.chromium.launch(
         headless=headless,
-        args=["--disable-blink-features=AutomationControlled"],
+        args=[
+            "--disable-blink-features=AutomationControlled",
+            # Chromium 在容器裡用 /dev/shm 做渲染程序之間的共享記憶體，
+            # 而 Docker 預設只給 64 MB。抓到圖多的頁面時會被吃滿，
+            # 渲染程序帶著 SIGTRAP 崩掉，然後 WSL 把整個位址空間寫成傾印檔
+            # （2026-08-29 / 08-31 / 09-02 三次，最大 244 GB，把 C 槽塞爆）。
+            # 這個旗標讓它改用 /tmp。compose 也把 shm_size 調到 1 GB，
+            # 兩層都做——只靠旗標的話，漏掉任何一個啟動點就會再犯。
+            "--disable-dev-shm-usage",
+        ],
     )
     logging.info("[STARTUP] 手動爬蟲 Browser 常駐池已就緒（reuse_browser=true）。")
     return pw, browser

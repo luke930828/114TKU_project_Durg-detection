@@ -8,9 +8,21 @@
     "max_harvest_parallel": 2
   },
   "keyword_synonyms": {
-    "cocaine": ["coke", "snow", "blow"],
-    "mdma": ["molly", "ecstasy", "e pill"],
-    "cannabis": ["weed", "marijuana", "thc"]
+    "cocaine": [
+      "coke",
+      "snow",
+      "blow"
+    ],
+    "mdma": [
+      "molly",
+      "ecstasy",
+      "e pill"
+    ],
+    "cannabis": [
+      "weed",
+      "marijuana",
+      "thc"
+    ]
   },
   "logging": {
     "max_log_bytes": 10485760,
@@ -431,14 +443,16 @@
     "known_targets": {}
   },
   "record_paths": {
-    "_comment": "只留：log_24h / log_manual / visited + images.json / nlp_text.json + DB",
+    "_comment": "images/nlp 改 JSONL 追加、不含 base64；超過 jsonl_max_bytes 自動輪替",
     "db_queue": "Record/queue.db",
     "db_monitor": "Record/monitor_state.db",
     "log_24h": "Record/log_24h.txt",
     "log_manual": "Record/log_manual.txt",
     "log_visited": "Record/visited.txt",
-    "json_images": "Record/images.json",
-    "json_nlp_text": "Record/nlp_text.json"
+    "json_images": "Record/images.jsonl",
+    "json_nlp_text": "Record/nlp_text.jsonl",
+    "jsonl_max_bytes": 33554432,
+    "jsonl_backup_count": 3
   },
   "crawl_logging": {
     "_comment": "手動寫 log_manual.txt；24H 寫 log_24h.txt；造訪寫 visited.txt",
@@ -452,5 +466,4 @@
     "backend_url": "http://backend:8000/api/crawler/report/",
     "api_key": ""
   }
-} 
-  
+}

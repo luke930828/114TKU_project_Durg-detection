@@ -1,0 +1,86 @@
+# ============================================================
+# 整合測試用的疊加層
+#
+#   docker compose -f deploy/docker-compose.yml \
+#                  -f tests/docker-compose.test.yml \
+#                  --env-file .env.local up -d
+#
+# 這裡「不」加 --profile full，所以 base 裡真的 nlp/yolo/crawler 不會啟動，
+# 改由下面三個 stub 用網路別名頂替。mysql / backend / frontend 全部是真的，
+# 驗到的是真的跨容器 HTTP、真的 MySQL、真的 nginx proxy。
+#
+# ⚠️ 相對路徑是以第一個 -f 檔案的目錄（deploy/）為基準，所以是 ../tests/stubs
+# ============================================================
+
+services:
+  # 測試端要直接查資料庫，確認資料真的落庫（不是只有 API 回 200）
+  mysql:
+    ports:
+      - "127.0.0.1:3306:3306"
+
+  backend:
+    environment:
+      # 獨立的測試資料庫，跟開發／展示用的那個完全分開。
+      # 測試會建幾百個帳號、改權限、凍結帳號——那些動作不該碰到真的資料。
+      # schema 由 make test-up 事先建好（mysql image 的 initdb 只在第一次建 volume 時跑）。
+      DB_NAME: ${TEST_DB_NAME:-drug_prevention_test}
+      # 初始管理員密碼。不設的話 main.py 會隨機產生一組並印在 log，
+      # 測試就登不進去了，所以測試環境固定成一個已知值。
+      # ⚠️ 這個值只給測試用，正式環境要另外設一組。
+      ADMIN_INITIAL_PASSWORD: ${TEST_ADMIN_PASSWORD:-IntegrationTest!2026}
+
+  nlp-stub:
+    build:
+      context: ../tests/stubs
+    restart: unless-stopped
+    environment:
+      ROLE: nlp
+      PORT: "8000"
+      BACKEND_BASE_URL: http://backend:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      STUB_NLP_SCORE: "0.6"          # 後端會算成 60
+    networks:
+      default:
+        aliases: [nlp]
+    ports:
+      - "127.0.0.1:18000:8000"       # /__stub/calls 給測試檢查用
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  yolo-stub:
+    build:
+      context: ../tests/stubs
+    restart: unless-stopped
+    environment:
+      ROLE: yolo
+      PORT: "5000"
+      BACKEND_BASE_URL: http://backend:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+      STUB_YOLO_SCORE: "80"
+    networks:
+      default:
+        aliases: [yolo]
+    ports:
+      - "127.0.0.1:15000:5000"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+  crawler-stub:
+    build:
+      context: ../tests/stubs
+    restart: unless-stopped
+    environment:
+      ROLE: crawler
+      PORT: "8001"
+      BACKEND_BASE_URL: http://backend:8000
+      INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
+    networks:
+      default:
+        aliases: [crawler]
+    ports:
+      - "127.0.0.1:18001:8001"
+    depends_on:
+      backend:
+        condition: service_healthy

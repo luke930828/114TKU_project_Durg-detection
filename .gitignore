@@ -18,9 +18,11 @@ env/
 .pytest_cache/
 
 # ---- Node / 前端 ----
-# 注意：不能用裸的 "dist/"——repo 根目錄的 dist/ 是要追蹤的展示發布包，
-# 只有 modules/frontend/dist/（vite build 產物）該被忽略。
+# 兩個 dist 都不進 git，但分開寫比較清楚哪個是哪個：
+#   /dist/                    根目錄的展示發布包（已停用，不再對外發布）
+#   /modules/frontend/dist/   vite build 產物
 node_modules/
+/dist/
 /modules/frontend/dist/
 .vite/
 *.local
@@ -51,7 +53,9 @@ logs/
 # ---- 專案專用 ----
 .claude
 # backend 還沒搬進 modules/，先整個忽略，也順便擋掉 src/防毒後端瘦身/資料/ 底下的密碼檔
-src/
+# ⚠️ 一定要用 /src/（錨定在 repo 根目錄），裸的 src/ 會連 modules/frontend/src/ 這種
+# 巢狀的 src 資料夾也一起吃掉，之前吃掉過整個前端原始碼
+/src/
 results/
 checkpoint-*/
 .cache/
@@ -62,8 +66,15 @@ checkpoint-*/
 
 # 內部用
 README-docker.md
-Makefile
 CONTRIBUTING.md
+TEST-PLAN.md
+
+# Makefile 與 tests/ 要進版控——CI 在 GitHub 上跑的是 clone 出來的內容，
+# 這兩個不在裡面的話，workflow 只會得到一個必定失敗的 CI。
+# 測試產生的報告則是每次執行覆寫，不需要追蹤。
+tests/report/
+tests/.pytest_cache/
+tests/**/__pycache__/
 
 # 爬蟲執行時產生的狀態/輸出，不是原始碼
 modules/crawler/app/monitor_state.db
@@ -73,3 +84,16 @@ modules/crawler/app/testHTML/
 *.db
 
 
+
+# TLS 憑證與私鑰，絕對不能進 git
+deploy/certs/
+deploy/acme-challenge/
+deploy/lego/
+
+# 這幾支是這台機器專屬的維運腳本，裡面有校園 IP、ACME 註冊用的 email
+# 與 WSL 特有的設定，不進版控。要給組員的話另外傳。
+# （scripts/ 底下其餘檔案照常進版控——Makefile 的 smoke / models /
+#   restore-help 都依賴它們，一起拿掉會讓組員 pull 之後那些指令直接壞掉。）
+scripts/issue-cert.sh
+scripts/renew-cert.sh
+scripts/disable-wsl-coredumps.sh

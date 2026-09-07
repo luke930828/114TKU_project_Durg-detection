@@ -1,2 +1,24 @@
-#所需環境
+# 用 pipreqs 掃 app/ 底下的 import 產生，並人工校正成本機實測過的版本
+# (pipreqs 是查 PyPI 最新版，不是查本機實際裝的版本，兩者不一定一樣，已手動核對修正)
+fastapi==0.136.1
+numpy==2.4.3
+opencv-python==4.13.0.92
+pydantic==2.13.4
+requests==2.32.5
+ultralytics==8.4.24
 
+# uvicorn: 拿來啟動服務的，main.py 本身沒有 import，pipreqs 掃不到但一定要有
+uvicorn==0.47.0
+
+# torch / torchvision 不在這個檔案裡，見 requirements-torch.txt。
+# 它們是 ultralytics 的必要依賴（main.py 沒有直接 import，所以 pipreqs 掃不到），
+# 但 GPU 版連帶的 CUDA 函式庫有 4.5 GB，跟其他套件放同一層的話，
+# 這個檔案改一行就要重抓四個小時。分開裝，那一層才不會被牽連。
+
+# easyocr: OCR 引擎（繁中+英文）。main.py 是透過 ai_model/ocr.py 間接用到，這裡要手動列。
+# ⚠️ 已知衝突：easyocr 會自己拉 opencv-python-headless 進來，跟上面釘的 opencv-python 搶同一個
+# cv2 命名空間，誰後裝誰的檔案就會蓋過去——實測過 headless 版本會蓋掉我們釘的 4.13.0.92，
+# 且版本還不一樣（曾經蓋成 5.0.0），行為不保證跟我們測過的一致。
+# Dockerfile 裡因此在裝完 requirements.txt 之後，額外強制重裝一次 opencv-python==4.13.0.92，
+# 確保最後贏的一定是我們測過、YOLO + EasyOCR 都驗證能正常運作的版本。
+easyocr==1.7.2

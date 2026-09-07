@@ -212,36 +212,50 @@ class DualTrackEngine:
         }
 
     def _save_intel(self, res: Dict):
-        self.found_shops.append(res)
-        for fp in res.get("fingerprints", []):
+        # 記憶體只留摘要，避免 found_shops 堆 base64 導致 OOM（INFRA-02）
+        slim_mem = {
+            "url": res.get("url") or "",
+            "tier": res.get("tier", "?"),
+            "score": res.get("score", 0),
+            "matched": list(res.get("matched") or [])[:30],
+            "fingerprints": list(res.get("fingerprints") or [])[:20],
+        }
+        self.found_shops.append(slim_mem)
+        for fp in slim_mem["fingerprints"]:
             self.learned_fingerprints.add(fp)
 
         ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        url = res.get("url") or ""
-        tier = res.get("tier", "?")
-        score = res.get("score", 0)
+        url = slim_mem["url"]
+        tier = slim_mem["tier"]
+        score = slim_mem["score"]
 
-        # 1) NLP／文字
+        # 1) NLP／文字摘要（JSONL 追加，不含全文）
         append_nlp_record(self.record_paths, {
             "timestamp": ts,
             "url": url,
             "tier": tier,
             "score": score,
-            "matched": res.get("matched") or [],
-            "fingerprints": res.get("fingerprints") or [],
-            "entities": res.get("entities") or {},
-            "text_content": res.get("text_content") or "",
+            "matched": slim_mem["matched"],
+            "fingerprints": slim_mem["fingerprints"],
+            "text_len": len(res.get("text_content") or ""),
             "source": "24H",
         })
-        # 2) 圖片 base64
+        # 2) 圖片摘要（JSONL 追加，不含 base64）
+        products = res.get("product_images") or []
         append_images_record(self.record_paths, {
             "timestamp": ts,
             "url": url,
             "tier": tier,
             "score": score,
-            "screenshot_b64": res.get("screenshot_b64") or "",
-            "full_screenshot_base64": res.get("full_screenshot_base64") or "",
-            "product_images": res.get("product_images") or [],
+            "has_screenshot": bool(
+                (res.get("screenshot_b64") or "").strip()
+                or (res.get("full_screenshot_base64") or "").strip()
+            ),
+            "product_images": [
+                {"filename": (p.get("filename") if isinstance(p, dict) else f"image_{i:02d}")}
+                for i, p in enumerate(products, start=1)
+                if p
+            ],
             "source": "24H",
         })
         # 3) 造訪總表

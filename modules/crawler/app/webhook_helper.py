@@ -405,6 +405,19 @@ def get_webhook_helper(config: Dict[str, Any]) -> WebhookHelper:
         url = webhook_settings.get(
             "backend_url", config.get("backend_webhook_url", "")
         )
-        api_key = webhook_settings.get("api_key", "")
+        # 服務間驗證用的 token。環境變數優先，config.json 的 api_key 只當本機
+        # 備援——docker-compose 已經把 INTERNAL_API_TOKEN 送進這個容器了，
+        # 不該再要求使用者去改一份進版控的 json。
+        api_key = os.getenv("INTERNAL_API_TOKEN") or webhook_settings.get("api_key", "")
+
+        # 後端的三個 report 端點現在會驗這個 token。有設 URL 卻沒有 token 的話，
+        # 每一筆蒐證資料都會被擋成 401，然後在這裡重試三次、寫進死信檔——
+        # 爬蟲看起來一切正常，資料庫卻一筆都不會進。寧可現在就起不來。
+        if url and not api_key:
+            raise RuntimeError(
+                "設定了 webhook backend_url 卻沒有 INTERNAL_API_TOKEN。"
+                "後端會把所有回報擋成 401。請在 .env 設定同一組 token。"
+            )
+
         _helper_instance = WebhookHelper(url, api_key, config=config)
     return _helper_instance

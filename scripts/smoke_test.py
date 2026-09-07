@@ -1,5 +1,14 @@
 #!/usr/bin/env python3
 """
+⚠️ 已被 tests/ 取代，保留是為了 make smoke 與 make up-staged 還在用。
+
+    新的整合測試：make test          （tests/integration/test_03_pipeline.py 涵蓋這裡全部內容再加上更多）
+    資安測試：    make test-security
+
+已知問題：下面第 4 步送的是 X-Token: <帳號名>，那是專案改用 JWT 之前的舊驗證方式，
+現在必定 401。因為預設不帶 --admin-account 會跳過這步，所以一直沒人發現。
+這行刻意不修——它本身就是「測試沒人在跑」的證據，由 tests/ 那套涵蓋。
+
 整合冒煙測試 —— 單機 compose up 之後跑這個，確認四個模組串起來是通的。
 
 它不需要真的去爬網站或跑推論，而是直接模擬各模組會送出的 payload，

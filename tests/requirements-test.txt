@@ -1,0 +1,13 @@
+# 測試端（跑在宿主機，不進任何 image）
+pytest==8.3.4
+pytest-timeout==2.3.1
+requests==2.32.3
+PyJWT==2.10.1
+PyMySQL==1.1.1
+# MySQL 8 預設用 caching_sha2_password 驗證，PyMySQL 走完整交握時需要它。
+# root 因為初始化時已完成快取所以連得上，新建的應用程式帳號則不行——
+# 少了這個相依，db fixture 會靜靜跳過，連帶讓依賴它的測試沒跑，
+# 報告就把已修好的項目顯示成待修（比直接失敗更難察覺）。
+cryptography==44.0.0
+openpyxl==3.1.5
+PyYAML

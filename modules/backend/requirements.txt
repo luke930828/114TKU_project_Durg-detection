@@ -1,2 +1,11 @@
-#所需環境
-
+fastapi==0.141.1
+pandas==3.0.5
+pydantic==2.13.4
+PyJWT==2.13.0
+Requests==2.34.2
+SQLAlchemy==2.0.52
+uvicorn
+pymysql
+python-multipart
+openpyxl
+bcrypt>=4.1
