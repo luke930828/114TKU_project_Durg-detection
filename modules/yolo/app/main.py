@@ -41,6 +41,19 @@ try:
     model = YOLO(str(MODEL_PATH))
     print(f"🎉 [成功] YOLOv8 自定義模型 {MODEL_PATH} 已順利載入！")
     print("🚨 模型內部真正的 ID 對應是：", model.names)
+
+    # 啟動時先空跑一張，把 ultralytics 的 fuse() 在單執行緒狀態下做完。
+    #
+    # 不暖機的話，fuse() 會延到「第一次推論」才發生；而 FastAPI 是多執行緒的，
+    # 服務剛起來就湧入請求時，可能一個執行緒正在 fuse（fuse 會把 Conv 的 bn
+    # 併掉並刪除屬性），另一個同時走訪同一批模組，就會炸
+    # 「'Conv' object has no attribute 'bn'」，該批圖片整批沒有回報，
+    # 對應的紀錄永遠停在「影像分析中...」（2026-09-07 補跑時實際遇到 5 次）。
+    try:
+        model.predict(np.zeros((64, 64, 3), dtype=np.uint8), verbose=False)
+        print("🔥 模型暖機完成（fuse 已在單執行緒下做完）。")
+    except Exception as warm_err:
+        print(f"⚠️ 模型暖機失敗（{warm_err}），服務照常啟動。")
 except Exception as e:
     print(f"🚨 [錯誤] 模型載入失敗，請確認 {MODEL_PATH} 是否存在！錯誤: {e}")
 
@@ -136,6 +149,13 @@ OCR_SEMAPHORE = threading.Semaphore(1)
 # 以及推論時的張量。長邊 1920 對讀字綽綽有餘。
 OCR_MAX_SIDE = 1920
 
+# 代表圖（前端拿來畫框展示用）的大小上限。後端的 Schema 擋在一千萬字元，
+# 超過就會把整份回報退成 422——實測有網址的商品圖是超大 PNG，
+# YOLO 分析完了卻因為這張圖被整筆擋掉，那一列就永遠停在「影像分析中...」。
+# 展示圖用不到那個解析度，這裡先縮好再送。
+DISPLAY_MAX_B64_CHARS = 2_000_000
+DISPLAY_MAX_SIDE = 1280
+
 # 沒收齊的批次要過期清掉。
 #
 # BATCH_MEMORY[batch_id] 只有在 processed_count == total_images 時才會被刪。
@@ -178,6 +198,38 @@ def downscale_for_ocr(img):
     scale = OCR_MAX_SIDE / longest
     return cv2.resize(img, (int(width * scale), int(height * scale)),
                       interpolation=cv2.INTER_AREA)
+
+
+def shrink_display_image(b64: str):
+    """代表圖太大就縮小重編碼成 JPEG；夠小就原封不動回傳。
+
+    只動超過門檻的那些，一般大小的圖保持原樣，避免整批圖的畫質無謂地掉一階。
+    偵測框是正規化座標（0~1），縮圖不影響框的位置。
+    """
+    if not b64 or len(b64) <= DISPLAY_MAX_B64_CHARS:
+        return b64
+    try:
+        buf = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
+        img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
+        if img is None:
+            print("⚠️ 代表圖解不開，改成不附展示圖。")
+            return None
+        height, width = img.shape[:2]
+        longest = max(height, width)
+        if longest > DISPLAY_MAX_SIDE:
+            scale = DISPLAY_MAX_SIDE / longest
+            img = cv2.resize(img, (int(width * scale), int(height * scale)),
+                             interpolation=cv2.INTER_AREA)
+        ok, encoded = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
+        if not ok:
+            print("⚠️ 代表圖重編碼失敗，改成不附展示圖。")
+            return None
+        out = base64.b64encode(encoded.tobytes()).decode("ascii")
+        print(f"🖼️ 代表圖太大，已縮小：{len(b64)} → {len(out)} 字元")
+        return out
+    except Exception as e:
+        print(f"⚠️ 代表圖縮圖時出錯（{e}），改成不附展示圖。")
+        return None
 
 
 def evict_stale_batches():
@@ -305,7 +357,7 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
             # 避免選到一張分數是靠低信心度雜訊框撐起來、濾掉框之後畫面空空如也的圖
             if visible_detections and current_score > BATCH_MEMORY[batch_id]["best_display_score"]:
                 BATCH_MEMORY[batch_id]["best_display_score"] = current_score
-                BATCH_MEMORY[batch_id]["best_display_image_base64"] = cleaned_b64
+                BATCH_MEMORY[batch_id]["best_display_image_base64"] = shrink_display_image(cleaned_b64)
                 BATCH_MEMORY[batch_id]["best_display_image_detections"] = visible_detections
 
             current_progress = BATCH_MEMORY[batch_id]["processed_count"]

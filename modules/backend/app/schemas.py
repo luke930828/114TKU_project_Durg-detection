@@ -172,7 +172,22 @@ class YOLOAnalysisReport(BaseModel):
         default=[], max_length=100)
     class_metadata: Optional[Dict[str, Any]] = None
     # 實際的代表圖約 30 KB ~ 1 MB，10 MB 已經是很寬鬆的上限。
-    representative_image_base64: Optional[str] = Field(None, max_length=10_000_000)
+    #
+    # 但超過上限時不能用 422 把整份回報退掉——實測有兩個網址就是這樣，
+    # YOLO 明明分析完了，只因為代表圖是一張超大的 PNG，整筆結果被擋在門外，
+    # 那一列就永遠停在「影像分析中...」。展示圖沒了頂多前端少一張圖，
+    # 分數與類別才是主體，不該被一張圖連坐。所以改成超過就丟掉這張圖、
+    # 其餘照收。
+    representative_image_base64: Optional[str] = None
+
+    @field_validator("representative_image_base64", mode="before")
+    @classmethod
+    def drop_oversized_image(cls, v):
+        if isinstance(v, str) and len(v) > 10_000_000:
+            print(f"⚠️ 代表圖過大（{len(v)} 字元），丟棄這張圖，其餘分析結果照常寫入。")
+            return None
+        return v
+
     representative_image_detections: Optional[List[Dict[str, Any]]] = Field(
         default=None, max_length=500)
     # OCR 結果寫成明確的結構，不用 Optional[Any]。
