@@ -94,7 +94,7 @@ def test_role_must_be_from_allowed_set(admin, make_user):
     """role 是自由字串，可以寫進任意值。"""
     account, _, _ = make_user()
     uid = {u["account"]: u["id"] for u in admin.get("/api/users/").json()}[account]
-    r = admin.put(f"/api/users/{uid}/role", json={"role": "隨便打的字串🙃"})
+    r = admin.put(f"/api/users/{uid}/role", json={"role": "隨便打的字串"})
     assert r.status_code in (400, 422), "role 接受任意字串，沒有白名單"
 
 
@@ -103,7 +103,7 @@ def test_admin_cannot_freeze_self(admin, make_user):
     """
     管理員不該能凍結自己（delete 有防，toggle-status 沒有）。
 
-    ⚠️ 這裡刻意用「另外開的管理員」來做，不能拿預設 admin 試——
+    這裡刻意用「另外開的管理員」來做，不能拿預設 admin 試——
     一旦凍結成功，它自己的 token 立刻失效，就再也解不開，整套測試會全部掛掉。
     解凍由沒被凍結的主 admin 出手。
     """

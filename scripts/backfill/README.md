@@ -41,7 +41,7 @@ $COMPOSE exec -T backend python -u /tmp/redispatch_nlp.py  --pace 1.5
 * 跑之前先確認引擎是活的（`make verify`），不然只是把資料再掉一次。
 * **補跑期間不要重建服務。** 尤其是這行：
 
-      docker compose up -d --force-recreate yolo      # ⚠️ 會連 backend 一起重建
+      docker compose up -d --force-recreate yolo      # 會連 backend 一起重建
 
   compose 會連同相依服務一起處理，而 yolo 是 depends_on: backend——腳本正是
   跑在 backend 容器裡，exec 連線會當場斷掉。要只動一個服務就加 `--no-deps`：

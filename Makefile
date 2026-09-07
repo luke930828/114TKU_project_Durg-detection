@@ -70,7 +70,7 @@ recreate: ## Docker Desktop 或 WSL 重開過就跑這個（重建容器，讓�
 	@echo ""
 	@# 要等服務真的就緒再檢查。YOLO 載入權重加 EasyOCR 要幾十秒，
 	@# 容器剛 Started 就去問 model_loaded 一定是 false——那是啟動中，不是壞掉，
-	@# 但檢查結果會顯示成紅色的 ❌，看的人會以為 recreate 沒有用。
+	@# 但檢查結果會顯示成 [錯誤]，看的人會以為 recreate 沒有用。
 	@echo "→ 等服務就緒（YOLO 載入模型要幾十秒）"
 	@for i in $$(seq 1 30); do \
 	   unhealthy=$$($(COMPOSE) ps --format '{{.Service}} {{.Status}}' 2>/dev/null \
@@ -87,21 +87,21 @@ verify: ## 檢查服務是不是「起來了但少東西」（掛載、模型、
 	@echo ""
 	@echo "→ YOLO 的模型權重（掛載沒進來的話這裡會是空的）"
 	@$(COMPOSE) exec -T yolo sh -c 'ls /models/best.pt >/dev/null 2>&1 \
-	  && echo "   ✅ /models/best.pt 在" \
-	  || echo "   ❌ /models/ 是空的 —— 掛載沒進來，跑 make recreate"' 2>/dev/null \
-	  || echo "   ⚠️  yolo 沒在跑"
+	  && echo "   [OK] /models/best.pt 在" \
+	  || echo "   [錯誤] /models/ 是空的 —— 掛載沒進來，跑 make recreate"' 2>/dev/null \
+	  || echo "   [警告] yolo 沒在跑"
 	@echo ""
 	@echo "→ YOLO 的模型有沒有真的載入"
 	@$(COMPOSE) exec -T backend sh -c 'curl -fsS -m 15 http://yolo:5000/health' 2>/dev/null \
 	  | grep -q '"model_loaded":true' \
-	  && echo "   ✅ model_loaded=true" \
-	  || echo "   ❌ 模型沒載入 —— 每張圖都會失敗，但端點照樣回 200"
+	  && echo "   [OK] model_loaded=true" \
+	  || echo "   [錯誤] 模型沒載入 —— 每張圖都會失敗，但端點照樣回 200"
 	@echo ""
 	@echo "→ 前端的憑證（掛載沒進來的話 HTTPS 會整個消失）"
 	@$(COMPOSE) exec -T frontend sh -c 'ls /etc/nginx/certs/fullchain.pem >/dev/null 2>&1 \
-	  && echo "   ✅ 憑證在" \
-	  || echo "   ❌ /etc/nginx/certs/ 是空的 —— 只會跑 HTTP，跑 make recreate"' 2>/dev/null \
-	  || echo "   ⚠️  frontend 沒在跑"
+	  && echo "   [OK] 憑證在" \
+	  || echo "   [錯誤] /etc/nginx/certs/ 是空的 —— 只會跑 HTTP，跑 make recreate"' 2>/dev/null \
+	  || echo "   [警告] frontend 沒在跑"
 	@echo ""
 	@# GPU 掉過的話，WSL2 的 VM 常常會跟著整個當掉——表現出來是「Docker 突然
 	@# 連不上、六個容器一起消失」。事後很難查，因為那時 dmesg 已經跟著重來了。
@@ -109,20 +109,20 @@ verify: ## 檢查服務是不是「起來了但少東西」（掛載、模型、
 	@# 出現第二次代表 GPU 裝置中途掉了又重接。
 	@echo "→ GPU 有沒有中途掉過（WSL 的 GPU 直通）"
 	@n=$$(dmesg 2>/dev/null | grep -c "registering driver dxgkrnl" || echo 0); \
-	  if [ "$$n" = "1" ]; then echo "   ✅ 正常（註冊 1 次）"; \
-	  elif [ "$$n" = "0" ]; then echo "   ⚠️  讀不到 dmesg（權限或非 WSL 環境）"; \
-	  else echo "   ❌ GPU 中途重置過 $$n 次 —— 重負載時的 GPU 掉線，VM 可能跟著當掉"; fi
+	  if [ "$$n" = "1" ]; then echo "   [OK] 正常（註冊 1 次）"; \
+	  elif [ "$$n" = "0" ]; then echo "   [警告] 讀不到 dmesg（權限或非 WSL 環境）"; \
+	  else echo "   [錯誤] GPU 中途重置過 $$n 次 —— 重負載時的 GPU 掉線，VM 可能跟著當掉"; fi
 	@echo ""
 	@echo "→ HTTPS 實際回應"
 	@code=$$(curl -sk -m 10 -o /dev/null -w '%{http_code}' https://127.0.0.1/ 2>/dev/null); \
-	  [ "$$code" = "200" ] && echo "   ✅ HTTPS $$code" || echo "   ❌ HTTPS $$code（憑證掛載或 nginx 設定有問題）"
+	  [ "$$code" = "200" ] && echo "   [OK] HTTPS $$code" || echo "   [錯誤] HTTPS $$code（憑證掛載或 nginx 設定有問題）"
 
 rebuild: ## 只重建某個模組：make rebuild M=backend
 	@test -n "$(M)" || (echo "用法：make rebuild M=backend" && exit 1)
 	$(COMPOSE) --env-file $(ENV_FILE) build --no-cache $(M)
 	$(COMPOSE) --env-file $(ENV_FILE) up -d $(M)
 
-clean: ## ⚠️ 停止並刪掉資料庫資料，整個重來
+clean: ## 注意：停止並刪掉資料庫資料，整個重來
 	@echo "這會刪掉資料庫裡所有資料。"
 	@read -p "確定嗎？打 yes 繼續：" ans && [ "$$ans" = "yes" ]
 	$(COMPOSE) --profile full down -v
@@ -133,11 +133,11 @@ check: ## 部署前檢查：確認沒有把秘密或大檔加進 git
 	@# app/password.py（密碼雜湊模組）、crawler/password.py（登入牆偵測）
 	@# 這種正當原始碼也標成密碼外洩。
 	@! git ls-files | grep -iE '(^|/)(\.env|.*密碼.*|.*secret.*|.*credential.*)(\.[a-z]+)?$$|\.(key|pem|pfx|p12)$$' \
-		|| (echo "  ❌ 上面這些檔案不該進 git！" && exit 1)
-	@echo "  ✅ 沒有"
+		|| (echo "  [錯誤] 上面這些檔案不該進 git！" && exit 1)
+	@echo "  [OK] 沒有"
 	@echo "→ 檢查有沒有大檔..."
 	@! git ls-files | xargs -I{} sh -c 'test -f "{}" && find "{}" -size +5M' 2>/dev/null | grep . \
-		|| (echo "  ⚠️  上面這些檔案超過 5MB，考慮改用 Release assets" )
+		|| (echo "  [警告] 上面這些檔案超過 5MB，考慮改用 Release assets" )
 	@echo "→ 檢查有沒有寫死的 IP..."
 	@! grep -rn '100\.[0-9]\+\.[0-9]\+\.[0-9]\+' modules/ --include='*.py' --include='*.ts' --include='*.tsx' \
 		|| (echo "   還有寫死的 tailnet IP，應該改用 config.py" && exit 1)
@@ -165,7 +165,7 @@ test-up: ## 起測試環境（獨立測試資料庫 + stub 頂替 NLP/YOLO/爬�
 	    -uroot -p"$$MYSQL_ROOT_PASSWORD" \
 	    -e "CREATE DATABASE IF NOT EXISTS $(TEST_DB) CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci; \
 	        GRANT ALL PRIVILEGES ON $(TEST_DB).* TO \"$$MYSQL_USER\"@\"%\"; FLUSH PRIVILEGES;"' \
-	  && echo "  ✅ 測試資料庫 $(TEST_DB) 就緒"
+	  && echo "  [OK] 測試資料庫 $(TEST_DB) 就緒"
 	$(TEST_COMPOSE) --env-file $(ENV_FILE) up -d --build
 	@echo ""
 	@echo "  後端 http://localhost:8000　前端 http://localhost:8080"
@@ -204,13 +204,13 @@ backup: ## 備份資料庫到 data/backups/（Docker volume 不是備份）
 	           --single-transaction --no-tablespaces --default-character-set=utf8mb4 \
 	           --routines --events "$$D"' 2>/dev/null | gzip > $$out; \
 	  gzip -t $$out && zcat $$out | tail -2 | grep -q "Dump completed" \
-	    && echo "  ✅ $$out（$$(du -h $$out | cut -f1)）" \
-	    || (echo "  ❌ 備份不完整，已刪除" && rm -f $$out && exit 1)
+	    && echo "  [OK] $$out（$$(du -h $$out | cut -f1)）" \
+	    || (echo "  [錯誤] 備份不完整，已刪除" && rm -f $$out && exit 1)
 
 restore-help: ## 資料庫壞掉／volume 不見時怎麼救
 	@echo "  先看 data/backups/ 有沒有 .sql.gz，有的話照 scripts/restore/README.md 灌回去。"
 	@echo "  沒有的話那份 README 也寫了從爬蟲記錄檔重建的完整流程。"
-	@ls -lh data/backups/*.sql.gz 2>/dev/null | tail -5 || echo "  ⚠️  目前沒有任何 dump"
+	@ls -lh data/backups/*.sql.gz 2>/dev/null | tail -5 || echo "  [警告] 目前沒有任何 dump"
 
 smoke: ## 整合冒煙測試：驗證模組間的介面契約
 	python3 scripts/smoke_test.py --base-url http://localhost:8000

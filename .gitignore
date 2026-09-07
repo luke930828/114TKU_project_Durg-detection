@@ -53,7 +53,7 @@ logs/
 # ---- 專案專用 ----
 .claude
 # backend 還沒搬進 modules/，先整個忽略，也順便擋掉 src/防毒後端瘦身/資料/ 底下的密碼檔
-# ⚠️ 一定要用 /src/（錨定在 repo 根目錄），裸的 src/ 會連 modules/frontend/src/ 這種
+# 一定要用 /src/（錨定在 repo 根目錄），裸的 src/ 會連 modules/frontend/src/ 這種
 # 巢狀的 src 資料夾也一起吃掉，之前吃掉過整個前端原始碼
 /src/
 results/

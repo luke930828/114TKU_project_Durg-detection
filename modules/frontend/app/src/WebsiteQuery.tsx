@@ -93,20 +93,14 @@ export default function WebsiteQuery({
   const [whiteTitle, setWhiteTitle] = useState("");
   const [whiteReason, setWhiteReason] = useState("");
   // 這次表單是從哪裡填的。
-  //
-  // 「AI 判過高風險、被人推翻」＝誤判回報，那是重訓模型要用的困難負樣本；
+  // 「AI 判過高風險、被人推翻」＝誤判回報（重訓要用的困難負樣本）；
   // 「人主動排除、AI 沒判過」＝一般新增。分界是資料的本質，不是操作路徑——
-  // 先前是用路徑分的（黑名單分頁按的算誤判、待確認分頁按的算一般新增），
-  // 但待確認裡的網站同樣是 AI 判高風險才會在那裡，記成「一般新增」等於
-  // 把誤判樣本混進「正常排除」，重訓時就分不出模型到底錯在哪。
+  // 用路徑分的話會把誤判樣本混進「正常排除」，重訓時就分不出模型錯在哪。
   const [whiteSource, setWhiteSource] = useState("一般新增");
   // 黑名單與待確認直接查後端。
-  //
-  // 以前這兩個清單是 App.tsx 的 useState，初始值還是寫死的假資料
-  // （dark-market-x.onion / google.com），而且只有開啟「AI 偵測」頁面時
-  // 才會被填入、只填當時載入的那一頁 50 筆，重新整理就歸零。
-  // 所以「待確認 11 筆」從來不是待辦總量，是那一頁裡剛好有幾筆。
-  // 人工黑名單（blacklist_websites），跟 AI 推導出來的那份分開顯示。
+  // 以前這兩個清單是 App.tsx 的 useState，只在開啟「AI 偵測」頁時填入當頁那 50 筆，
+  // 重新整理就歸零——所以「待確認 N 筆」從來不是待辦總量。
+  // 人工黑名單（blacklist_websites）跟 AI 推導出來的那份分開顯示。
   const [manualBlacklist, setManualBlacklist] = useState<WhitelistEntry[]>([]);
   const [blackTitle, setBlackTitle] = useState("");
   const [blackReason, setBlackReason] = useState("");
@@ -400,13 +394,9 @@ export default function WebsiteQuery({
     const url = whiteUrl.trim();
     const title = whiteTitle.trim();
     const reason = whiteReason.trim();
-    // 只有網址是必填。
-    //
-    // 原本三個欄位都強制，但「這個網域已經在白名單了，我只是要清掉殘留的
-    // 待確認」這個情境下，名稱與原因根本不會被採用（後端會沿用既有那筆）——
+    // 只有網址是必填：網域已經在白名單時，名稱與原因不會被採用（後端沿用既有那筆），
     // 強制填完再丟掉，使用者會以為自己填的被存錯了。
-    // 真的要新增時後端會擋：title/reason 是 schema 的必填欄位，送空字串進去
-    // 仍然建得起來，所以這裡給預設值而不是放行空值。
+    // 真的要新增時後端會擋，所以這裡給預設值，而不是放行空值。
     if (!url) {
       alert("請填寫網址。");
       return;

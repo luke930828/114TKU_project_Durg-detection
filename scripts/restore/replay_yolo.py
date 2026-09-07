@@ -45,13 +45,9 @@ def main():
             c.execute("SELECT id FROM suspect_websites WHERE url=%s", (ONLY,))
         else:
             # 只挑「有圖、而且 YOLO 根本沒跑過」的。
-            #
-            # 不能用「沒有代表圖」當條件——YOLO 只在信心度 >= 0.5 時才產生
-            # 代表圖（yolo/app/main.py:155），所以跑過但沒圖是正常結果。
-            # 用那個條件的話，1357 筆裡有 1276 筆會被一遍遍重跑而且永遠
-            # 不會「跑完」，實際需要補的只有 81 筆。
-            #
-            # 真正沒跑過的特徵是 yolo_details 還停在建檔時的佔位字串。
+            # 不能用「沒有代表圖」當條件——YOLO 只在信心度夠高時才產生代表圖，
+            # 跑過但沒圖是正常結果，用那個條件會把大量已完成的紀錄一遍遍重跑、
+            # 而且永遠不會「跑完」。真正沒跑過的特徵是 yolo_details 還停在佔位字串。
             c.execute(
                 "SELECT s.id FROM suspect_websites s "
                 "JOIN ai_analysis_results a ON a.url = s.url "
@@ -95,11 +91,11 @@ def main():
                     else:
                         fail += 1
                         if fail <= 5:
-                            print(f"  ⚠️ {r.status_code} {r.text[:160]}", flush=True)
+                            print(f"  [警告] {r.status_code} {r.text[:160]}", flush=True)
                 except Exception as e:                            # noqa: BLE001
                     fail += 1
                     if fail <= 5:
-                        print(f"  ⚠️ {type(e).__name__}: {e}", flush=True)
+                        print(f"  [警告] {type(e).__name__}: {e}", flush=True)
                 sent += 1
                 time.sleep(DELAY)
 

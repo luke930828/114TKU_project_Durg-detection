@@ -34,7 +34,7 @@ def test_dangerous_url_not_forwarded_to_crawler(admin):
     """
     更關鍵的一步：確認惡意網址沒有真的被送到爬蟲去抓。
 
-    ⚠️ 網址每次都要不一樣。scan.py 會先查歷史紀錄，
+    網址每次都要不一樣。scan.py 會先查歷史紀錄，
     上一輪跑過的網址第二次就直接回 history，根本不會走到派發那一步，
     測試就會假性通過（誤報成「已修復」）。
     """

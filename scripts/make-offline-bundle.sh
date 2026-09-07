@@ -15,7 +15,7 @@ OUT="offline-bundle-${VERSION}"
 
 mkdir -p "$OUT/images"
 
-echo "📥 拉取 image..."
+echo "拉取 image..."
 IMAGES=(
   "mysql:8.0"
   "${PREFIX}/backend:${VERSION}"
@@ -28,7 +28,7 @@ for img in "${IMAGES[@]}"; do
   docker pull "$img"
 done
 
-echo "💾 匯出成 tar（會很大，YOLO 那包 CUDA base 大概就 6-8GB）..."
+echo "匯出成 tar（會很大，YOLO 那包 CUDA base 大概就 6-8GB）..."
 docker save "${IMAGES[@]}" | gzip -1 > "$OUT/images/all-images.tar.gz"
 
 cp dist/docker-compose.yml "$OUT/"
@@ -40,7 +40,7 @@ cat > "$OUT/start-offline.sh" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 cd "$(dirname "$0")"
-echo "📦 載入本機 image（約 3-10 分鐘）..."
+echo "載入本機 image（約 3-10 分鐘）..."
 # 如果 image 被 split 成多份，先合併
 if ls images/all-images.tar.gz.part-* >/dev/null 2>&1; then
   cat images/all-images.tar.gz.part-* > images/all-images.tar.gz
@@ -48,19 +48,19 @@ fi
 gunzip -c images/all-images.tar.gz | docker load
 [ -f .env ] || cp .env.example .env
 docker compose up -d
-echo "✅ 完成 → http://localhost:8080"
+echo "[OK] 完成 → http://localhost:8080"
 EOF
 chmod +x "$OUT/start-offline.sh"
 
 SIZE=$(du -sh "$OUT" | cut -f1)
-echo "📦 打包中（目前 $SIZE）..."
+echo "打包中（目前 $SIZE）..."
 tar czf "${OUT}.tar.gz" "$OUT"
 
-# ⚠️ GitHub Release 單一檔案上限 2 GiB。
+# GitHub Release 單一檔案上限 2 GiB。
 #    含 CUDA 的 YOLO image 一定會超過，所以要切開。
 BYTES=$(stat -c%s "${OUT}.tar.gz" 2>/dev/null || stat -f%z "${OUT}.tar.gz")
 if [ "$BYTES" -gt 2000000000 ]; then
-  echo "✂️  超過 GitHub Release 的 2GB 單檔上限，切成多份..."
+  echo " 超過 GitHub Release 的 2GB 單檔上限，切成多份..."
   split -b 1900M "${OUT}.tar.gz" "${OUT}.tar.gz.part-"
   rm "${OUT}.tar.gz"
   echo "   使用者要先合併再解壓："

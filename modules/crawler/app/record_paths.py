@@ -293,7 +293,7 @@ def _load_json_list(path: str) -> List[Dict[str, Any]]:
     .jsonl，migrate_record_legacy.py 有 6 處在讀它們，json.load 會拋例外、
     被 except 接住後回傳 []——不是報錯，是**靜靜地讀到空的**。
 
-    ⚠️ 會把整個檔案讀進記憶體，只適合手動跑的遷移工具，不要放在爬頁的路徑上。
+    會把整個檔案讀進記憶體，只適合手動跑的遷移工具，不要放在爬頁的路徑上。
     """
     if not os.path.isfile(path):
         return []

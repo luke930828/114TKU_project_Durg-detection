@@ -28,12 +28,12 @@ def _initial_admin_password() -> tuple[str, bool]:
 
 # --- 初始化腳本區塊 ---
 def init_default_admin(db):
-    print("🌱 進入資料庫初始化檢查...")
+    print("進入資料庫初始化檢查...")
 
     admin_user = db.query(database.User).filter(database.User.account == "admin").first()
 
     if not admin_user:
-        print("⚠️ 未偵測到管理員帳號，正在自動建立預設管理員...")
+        print("[警告] 未偵測到管理員帳號，正在自動建立預設管理員...")
         new_user_id = "U" + str(uuid.uuid4().hex)[:8].upper()
         password, generated = _initial_admin_password()
 
@@ -49,7 +49,7 @@ def init_default_admin(db):
         db.add(new_admin)
         db.commit()
 
-        print("✅ 預設管理員建立完成！帳號：admin")
+        print("[OK] 預設管理員建立完成！帳號：admin")
         if generated:
             print("=" * 62)
             print("  這是隨機產生的初始密碼，只會出現這一次，請立刻登入並修改：")
@@ -59,11 +59,11 @@ def init_default_admin(db):
         else:
             print("   密碼取自 ADMIN_INITIAL_PASSWORD，請登入後盡快修改。")
     else:
-        print("✅ 預設管理員帳號已存在，跳過初始化。")
+        print("[OK] 預設管理員帳號已存在，跳過初始化。")
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    print("🚀 伺服器啟動中，連線至資料庫...")
+    print("伺服器啟動中，連線至資料庫...")
     # Docker 會在 uvicorn 前執行一次；保留這次呼叫讓直接以 uvicorn 啟動的
     # 開發環境也能補齊既有資料表的 OCR 欄位。此程序可安全重複執行。
     database.initialize_database()
@@ -71,12 +71,12 @@ async def lifespan(app: FastAPI):
     try:
         init_default_admin(db)
     except Exception as e:
-        print(f"❌ 初始化管理員失敗: {e}")
+        print(f"[錯誤] 初始化管理員失敗: {e}")
     finally:
         db.close()
     
     yield
-    print("🛑 伺服器正在關閉...")
+    print("伺服器正在關閉...")
 
 # --- 應用程式實例 ---
 app = FastAPI(
@@ -86,18 +86,14 @@ app = FastAPI(
 )
 
 # --- 中介軟體 (CORS) ---
-# CORS_ORIGINS 早就在 .env.local 與 compose 裡設好了（http://localhost:8080），
-# 但這裡以前寫死 allow_origins=["*"]，那個設定完全沒有作用。
-#
-# 而且 "*" 配 allow_credentials=True 是規格上無效的組合。更重要的是
-# 這個系統的 token 是手動放在 X-Token header，不是 cookie——
-# 瀏覽器的 credential 規則保護不到它，任何網站都能讀到 API 回應。
+# 用 .env 的 CORS_ORIGINS，不要寫死 "*"：token 是手動放在 X-Token header
+# 而不是 cookie，瀏覽器的 credential 規則保護不到，"*" 等於任何網站都能讀 API 回應。
 _origins = [o.strip() for o in os.getenv("CORS_ORIGINS", "").split(",") if o.strip()]
 if not _origins:
     # 沒設就只開本機，不要退回全開。寧可前端連不上讓人發現，
     # 也不要靜靜地對全世界開放。
     _origins = ["http://localhost:8080", "http://127.0.0.1:8080"]
-    print(f"⚠️ 沒有設定 CORS_ORIGINS，預設只允許 {_origins}")
+    print(f"[警告] 沒有設定 CORS_ORIGINS，預設只允許 {_origins}")
 
 app.add_middleware(
     CORSMiddleware,

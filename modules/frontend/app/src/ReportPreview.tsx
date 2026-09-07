@@ -10,7 +10,7 @@ interface Props {
 }
 
 export function ReportPreview({ onBack, type }: Props) {
-  console.log("type =", type); // ⭐ 檢查用（可以之後刪掉）
+  console.log("type =", type); // 檢查用（可以之後刪掉）
 
   const data = [
     { name: "毒品交易網站", risk: "高風險", score: 95 },
@@ -18,7 +18,7 @@ export function ReportPreview({ onBack, type }: Props) {
     { name: "一般內容", risk: "低風險", score: 30 },
   ];
 
-  // 📄 PDF下載
+  // PDF下載
   const downloadPDF = () => {
     const doc = new jsPDF();
 
@@ -33,7 +33,7 @@ export function ReportPreview({ onBack, type }: Props) {
     doc.save("report.pdf");
   };
 
-  // 📊 Excel下載
+  // Excel下載
   const downloadExcel = () => {
     const worksheet = XLSX.utils.json_to_sheet(data);
     const workbook = XLSX.utils.book_new();
@@ -107,7 +107,7 @@ export function ReportPreview({ onBack, type }: Props) {
           </table>
         </div>
 
-        {/* ⭐ 單一下載按鈕（重點） */}
+        {/* 單一下載按鈕（重點） */}
         <div className="flex justify-start">
           {type === "pdf" && (
             <button

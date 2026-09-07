@@ -191,7 +191,7 @@ def admin_token(stack_ready):
         return _login(*DEFAULT_ADMIN)
     except RuntimeError:
         if _unfreeze_admin_via_db():
-            print("\n⚠️  預設 admin 之前被測試鎖住了，已直接從資料庫解開。")
+            print("\n[警告] 預設 admin 之前被測試鎖住了，已直接從資料庫解開。")
             return _login(*DEFAULT_ADMIN)
         raise
 
@@ -360,7 +360,7 @@ def pytest_sessionfinish(session, exitstatus):
         lines.append(f"| {sev} | {c['open']} | {c['fixed']} | {c['untested']} |")
     lines.append("")
 
-    icon = {"open": "🔴 待修", "fixed": "✅ 已修復", "untested": "⚪ 未涵蓋", "error": "⚠️ 測試異常"}
+    icon = {"open": "待修", "fixed": "已修復", "untested": "未涵蓋", "error": "測試異常"}
     for sev in vulns.SEVERITY_ORDER:
         items = [(k, v) for k, v in vulns.VULNS.items() if v["severity"] == sev]
         if not items:
@@ -388,11 +388,11 @@ def pytest_sessionfinish(session, exitstatus):
         "## 後續建議",
         "",
         "1. 依 Critical → High → Medium 順序修，每修一項重跑 `make test-security`，"
-        "該項會從 🔴 自動變成 ✅。",
+        "該項會從「待修」自動變成「已修復」。",
         "2. 加一個 PR 觸發的 CI workflow 跑這套測試，避免修好的東西再退回去（SEC-21）。",
         "3. `tests/integration/` 的失敗不是漏洞，是模組間介面契約真的斷了，要優先處理。",
         "",
     ]
 
     out.write_text("\n".join(lines), encoding="utf-8")
-    print(f"\n📄 稽核報告已產生：{out}")
+    print(f"\n稽核報告已產生：{out}")

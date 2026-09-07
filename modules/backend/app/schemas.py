@@ -48,24 +48,13 @@ def reject_if_internal(url: str) -> str:
 
     return url
 
-# 為什麼這裡沒有 XSS 黑名單了
-# ─────────────────────────────
-# 原本擋 <script>、javascript:、onload=、onerror= 四個字串。問題有兩個：
+# 為什麼這裡沒有 XSS 黑名單
+# 原本擋 <script>、javascript: 等四個字串，但黑名單永遠列不完，只是讓人以為擋住了；
+# 而且它在輸入端做 html.escape() 卻只做在「讀」的那一側，反而讓帳號含 & < > " '
+# 的人永遠登不進去——防護沒做到，資料先壞了。
 #
-# 1. 黑名單永遠列不完。<img src=x onmouseover=1>、<script >（多一個空格）、
-#    <svg onfocus=>、<details ontoggle=> 全部繞得過。擋掉四個字串只是讓人
-#    以為擋住了，實際的攻擊面一點都沒縮小。
-#
-# 2. 它還在存進資料庫前做 html.escape()，但只做在「讀」的那一側。
-#    UserLogin 會把帳號跳脫後才去查資料庫，UserCreate 卻是原文存進去，
-#    結果帳號含 & < > " ' 的人永遠登不進去——防護沒做到，資料先壞了。
-#
-# XSS 要在「輸出」的地方擋，不是在輸入的地方：
-#   前端是 React，插值預設就會跳脫（要小心的是 dangerouslySetInnerHTML）；
-#   後端回應是 application/json，瀏覽器不會拿去當 HTML 解析。
-#
-# 所以輸入端只負責它真正該負責的事：型別與長度。
-# 長度上限對齊 database.py 的欄位定義，避免寫入時才炸出 MySQL DataError。
+# XSS 要在「輸出」的地方擋：前端是 React（插值預設跳脫），後端回的是 JSON。
+# 所以輸入端只管型別與長度，長度上限對齊 database.py 的欄位定義。
 
 
 # 前端輸入區
@@ -158,7 +147,7 @@ class YOLOAnalysisReport(BaseModel):
     （ai_analysis_results.url 是 varchar(768)，寫入時 MySQL 丟 DataError），
     1 MB 的 representative_image_base64 則被照單全收寫進 LONGTEXT。
 
-    ⚠️ List 的 max_length 限的是「項目數量」，不是每個字串的長度。
+    List 的 max_length 限的是「項目數量」，不是每個字串的長度。
     兩者都要擋——只加前者的話，一個 1 MB 的物件名稱照樣穿得過去。
 
     端點雖然要 internal token，但那個 token 存在五個容器裡，
@@ -172,32 +161,24 @@ class YOLOAnalysisReport(BaseModel):
         default=[], max_length=100)
     class_metadata: Optional[Dict[str, Any]] = None
     # 實際的代表圖約 30 KB ~ 1 MB，10 MB 已經是很寬鬆的上限。
-    #
-    # 但超過上限時不能用 422 把整份回報退掉——實測有兩個網址就是這樣，
-    # YOLO 明明分析完了，只因為代表圖是一張超大的 PNG，整筆結果被擋在門外，
-    # 那一列就永遠停在「影像分析中...」。展示圖沒了頂多前端少一張圖，
-    # 分數與類別才是主體，不該被一張圖連坐。所以改成超過就丟掉這張圖、
-    # 其餘照收。
+    # 但超過時不能用 422 把整份回報退掉：分數與類別才是主體，不該被一張圖連坐，
+    # 否則 YOLO 明明分析完了，那一列還是會永遠停在「影像分析中...」。
+    # 改成超過就丟掉這張展示圖、其餘照收。
     representative_image_base64: Optional[str] = None
 
     @field_validator("representative_image_base64", mode="before")
     @classmethod
     def drop_oversized_image(cls, v):
         if isinstance(v, str) and len(v) > 10_000_000:
-            print(f"⚠️ 代表圖過大（{len(v)} 字元），丟棄這張圖，其餘分析結果照常寫入。")
+            print(f"[警告] 代表圖過大（{len(v)} 字元），丟棄這張圖，其餘分析結果照常寫入。")
             return None
         return v
 
     representative_image_detections: Optional[List[Dict[str, Any]]] = Field(
         default=None, max_length=500)
-    # OCR 結果寫成明確的結構，不用 Optional[Any]。
-    #
-    # 原本的版本是 `ocr_results: Optional[Any] = None`，註解寫「格式可能隨模型
-    # 版本改變，以 JSON 原樣保存」。但這個欄位正是 YOLO 與前端對不起來的地方：
-    # YOLO 送物件、前端讀陣列，兩邊都「照自己的格式寫」，結果 OCR 永遠不顯示。
-    # 把契約寫進 schema，格式一變就 422，不會再靜靜地不顯示。
-    #
-    # 另外 Any 沒有任何長度上限，等於在 SEC-16 修好的地方開一個新洞。
+    # OCR 結果寫成明確的結構，不用 Optional[Any]：這個欄位正是 YOLO 與前端對不起來
+    # 的地方（一邊送物件、一邊讀陣列，結果靜靜地不顯示）。把契約寫進 schema，
+    # 格式一變就 422。Any 也沒有任何長度上限。
     ocr_results: Optional[OCRResults] = None
     # 「這一頁根本沒有圖」跟「有圖但沒看到東西」是兩件事，畫面上要分得出來。
     # 前者是爬蟲沒抓到任何商品圖，後者是 YOLO 跑完但沒有檢出。

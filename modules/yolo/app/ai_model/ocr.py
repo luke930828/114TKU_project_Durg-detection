@@ -17,7 +17,7 @@ OCR_LANGUAGES = ["ch_tra", "en"]  # 繁體中文 + 英文，包裝／標籤常�
 def load_ocr_reader(gpu: bool = True) -> "easyocr.Reader":
     """建立 EasyOCR reader。
 
-    ⚠️ 關於 gpu 這個參數
+    關於 gpu 這個參數
     ────────────────────
     這裡原本的註解寫「刻意用 CPU，不跟 YOLO 搶 GPU：這張卡只有 4GB 顯存」。
     那是在開發機上測到的結論，部署機器不是那樣：
@@ -31,7 +31,7 @@ def load_ocr_reader(gpu: bool = True) -> "easyocr.Reader":
     CPU，行為跟以前一樣。
     """
     if not gpu:
-        # 🌟 CPU 模式下實測到的關鍵問題：torch 預設會用多執行緒（OpenMP）平行運算，
+        # CPU 模式下實測到的關鍵問題：torch 預設會用多執行緒（OpenMP）平行運算，
         # 單獨跑script時很快（~2秒），但放進 uvicorn 這種本身就有多執行緒/事件迴圈的伺服器背景任務裡，
         # torch 的執行緒池會跟伺服器自己的執行緒互搶 CPU 核心，效能嚴重惡化到 10~30 秒以上，
         # 從外面看起來像卡住。強制限制成單執行緒反而更快更穩定，這是這類問題的標準解法。
@@ -57,7 +57,7 @@ def extract_texts(reader: Optional["easyocr.Reader"], image) -> List[Dict]:
     try:
         results = reader.readtext(image)
     except Exception as e:
-        print(f"[⚠️ OCR 失敗] {e}")
+        print(f"[OCR 失敗] {e}")
         return []
 
     detected_texts = []

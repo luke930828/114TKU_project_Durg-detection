@@ -70,11 +70,9 @@ class PredictResponse(BaseModel):
 
 
 # ── 關鍵字提取（透過 Attention 權重）────────────────────────────────────────────
-# 這個模型是 XLM-RoBERTa，用 SentencePiece 切詞，一個「字」常常被切成好幾片：
-#   dispensary → ▁di + spen + sa + ry
-# 舊版直接把單一 token decode 出來當關鍵字，所以畫面上會出現 ana、pensa、ed、BU
-# 這種看不懂的碎片——實測 58% 的關鍵字長度 ≤3 個字元。
-# ▁ 是 SentencePiece 的「字首」標記，要靠它把碎片組回完整的字。
+# XLM-RoBERTa 用 SentencePiece 切詞，一個「字」常被切成好幾片
+# （dispensary → ▁di + spen + sa + ry）。直接把單一 token 當關鍵字，畫面上就會
+# 出現看不懂的碎片；▁ 是「字首」標記，要靠它把碎片組回完整的字。
 WORD_START = "\u2581"
 
 # CLS 的 attention 天生會集中在功能詞上（attention sink），沒有這張表的話
@@ -96,12 +94,9 @@ com www http https html org net
 """.split())
 
 
-# 電商樣板用語。這些字在每一頁都出現、attention 也不低，但對「這是不是毒品
-# 網站」毫無資訊量——實測它們佔關鍵字欄位的 11%。
-#
-# 註：試過改用「出現次數加總」來壓過它們，結果更糟——重複最多次的正是橫幅與
-# 頁尾（SITEWIDE、FREE SHIPPING、MONDAY–FRIDAY），六個網頁裡三個變差。
-# 所以是列表過濾，不是改計分方式。
+# 電商樣板用語。這些字每一頁都出現、attention 也不低，但對「這是不是毒品網站」
+# 毫無資訊量。試過改用「出現次數加總」來壓過它們，結果更糟——重複最多次的正是
+# 橫幅與頁尾。所以是列表過濾，不是改計分方式。
 UI_NOISE = frozenset("""
 cart carts checkout basket shop shops store stores home menu login logout signin signup
 account search view browse click press skip content site sitewide page pages next prev

@@ -56,15 +56,10 @@ def scan_target_url(request_data: FrontendScanRequest, db: Session = Depends(get
                 "data": existing_record
             }
         else:
-            # 未完成的紀錄要不要重派，取決於它「卡多久了」。
-            #
-            # 前端每 20 秒輪詢一次，而輪詢打的就是這支端點。原本只要紀錄還沒完成
-            # 就無條件重派，等於每 20 秒叫爬蟲重抓同一頁一次——實測 15 分鐘內
-            # 對同一個網址發了 33 次爬蟲請求，把 AI 引擎的佇列灌滿，反而讓它
-            # 更不可能跑完，變成自己拖垮自己。
-            #
-            # 改成只有「真的卡住」才重派：剛派出去還在跑的（RETRY_AFTER_SECONDS
-            # 之內）直接回報處理中，讓前端繼續等就好。
+            # 未完成的紀錄要不要重派，取決於它卡多久了。
+            # 前端每 20 秒輪詢一次，而輪詢打的就是這支端點——無條件重派等於每 20 秒
+            # 重爬同一頁，把 AI 引擎的佇列灌爆，反而更跑不完。
+            # 只有超過 RETRY_AFTER_SECONDS 才重派，其餘直接回報處理中。
             age = None
             if existing_record.created_at:
                 age = (datetime.now() - existing_record.created_at).total_seconds()
