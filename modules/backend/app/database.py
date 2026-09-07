@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, DateTime, Foreign
 from sqlalchemy.sql import func
 from sqlalchemy.orm import declarative_base, relationship, sessionmaker
 from datetime import datetime
-from sqlalchemy.dialects.mysql import LONGTEXT
+from sqlalchemy.dialects.mysql import DATETIME as MySQLDateTime, LONGTEXT
 import json
 import os
 
@@ -52,7 +52,12 @@ class AuditLog(Base):
     action_type = Column(String(100), nullable=False)
     
     # 舊寫法（勿用）：default=datetime.utcnow
-    action_timestamp = Column(DateTime, default=func.now())
+    #
+    # 精確到微秒（fsp=6）。稽核軌跡是數位證據，「誰先誰後」有時候就是關鍵，
+    # 而一秒內可以發生很多次操作——批次覆核一次就寫進好幾筆。
+    # 取值一定要用 NOW(6)：MySQL 的 NOW() 只給到秒，欄位就算開了微秒
+    # 也只會存進 .000000。
+    action_timestamp = Column(MySQLDateTime(fsp=6), default=func.now(6))
     
     details = Column(String(500), nullable=True)
     
@@ -121,7 +126,10 @@ class AIAnalysisResult(Base):
     risk_level = Column(String(50))
     
     class_metadata = Column(JSON, nullable=True) 
+    # 代表圖改存檔案，這裡放相對路徑（見 app/image_store.py）。
+    # 舊欄位保留讓遷移期間新舊資料並存，搬完會被清空。
     representative_image_base64 = Column(LONGTEXT, nullable=True)
+    representative_image_path = Column(String(128), nullable=True)
     representative_image_detections = Column(JSON, nullable=True)
     # OCR 是由影像分析引擎回傳的結構化結果；保留 JSON，避免把每個辨識框拆成
     # 多張資料表後破壞既有 API 的回傳格式。
@@ -140,13 +148,32 @@ _PENDING_COLUMNS = [
     # 白名單的來源分類（一般新增 / 誤判回報）。原本是請組員自己下 SQL，
     # 但那種「請大家記得手動跑」的步驟一定會有人漏掉，放進這裡自動補。
     ("whitelist_websites", "source", "VARCHAR(20) DEFAULT '一般新增'"),
+    # 代表圖搬到檔案系統之後，這裡存的是相對路徑而不是內容。
+    ("ai_analysis_results", "representative_image_path", "VARCHAR(128) NULL"),
+]
+
+
+# 既有欄位要「改型別」時登記在這裡。
+#
+# create_all 不會 ALTER 已存在的表，而上面的 _PENDING_COLUMNS 只加新欄位、
+# 不會動既有欄位的型別。理由跟那邊一樣：靠「請組員記得手動下 SQL」一定有人漏掉。
+#
+# (表名, 欄位名, 目標 DDL, MySQL 回報的 COLUMN_TYPE)
+#
+# 最後那個欄位要填 MySQL 自己在 information_schema 裡回報的字串（小寫），
+# 不能用 SQLAlchemy inspector 的型別——它的 str() 是 "DATETIME"，
+# 不帶 fsp，拿來比對永遠不相等，結果每次啟動都重跑一次 ALTER，
+# 而 MODIFY COLUMN 會整張表重建。
+_PENDING_COLUMN_TYPES = [
+    # 稽核時間改成微秒精度，見 AuditLog.action_timestamp 的說明。
+    ("audit_logs", "action_timestamp", "DATETIME(6) NULL", "datetime(6)"),
 ]
 
 
 def initialize_database():
-    """建立新表並以非破壞方式補齊既有資料庫缺少的欄位。
+    """建立新表並以非破壞方式補齊既有資料庫缺少的欄位與型別。
 
-    可以安全地重複執行：每一欄都先檢查存不存在，不會覆寫任何既有資料。
+    可以安全地重複執行：每一項都先檢查現況，不會覆寫任何既有資料。
     """
     Base.metadata.create_all(bind=engine)
 
@@ -160,6 +187,24 @@ def initialize_database():
         with engine.begin() as connection:
             connection.execute(text(f"ALTER TABLE {table} ADD COLUMN {column} {ddl}"))
         print(f"已新增 {table}.{column} 欄位")
+
+    for table, column, ddl, want in _PENDING_COLUMN_TYPES:
+        if table not in inspector.get_table_names():
+            continue
+        with engine.begin() as connection:
+            current = connection.execute(text(
+                "SELECT COLUMN_TYPE FROM information_schema.columns "
+                "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = :t "
+                "  AND COLUMN_NAME = :c"
+            ), {"t": table, "c": column}).scalar()
+            if current is None:
+                continue
+            # 已經是目標型別就跳過。MODIFY 會重建整張表，不該每次啟動都做一次。
+            if str(current).lower() == want:
+                continue
+            connection.execute(
+                text(f"ALTER TABLE {table} MODIFY COLUMN {column} {ddl}"))
+        print(f"已把 {table}.{column} 從 {current} 改成 {ddl}")
 
 
 #  7. 執行建立資料表的指令 

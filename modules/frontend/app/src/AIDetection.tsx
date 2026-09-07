@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { ArrowLeft, RefreshCw } from "lucide-react";
+import { ArrowLeft, ChevronRight, RefreshCw } from "lucide-react";
 import { authFetch } from "./auth";
 import { ExternalLink } from "./ExternalLink";
 
 const REFRESH_INTERVAL_MS = 30_000;
 const CRAWLER_LIMIT = 50;
+// 展開一個網域時一次抓多少頁。目前單一網域最多 50 筆，200 是留給之後成長的餘裕。
+const DOMAIN_PAGE_LIMIT = 200;
 
 interface PendingSiteInput {
   url: string;
@@ -50,6 +52,16 @@ interface ResultType {
   hasRepresentativeImage: boolean;
   representativeImageBase64: string | null;
   representativeImageDetections: RepresentativeDetection[];
+}
+
+// 清單以「網域」為一列，同網域的各個網頁收在底下，點開才去查。
+// 一個網域動輒幾十頁，平鋪的話一頁 50 筆常常全部是同一個站。
+interface DomainRow {
+  domain: string;
+  pageCount: number;
+  score: number;
+  riskLevel: ResultType["riskLevel"];
+  date: string;
 }
 
 interface CrawlerStats {
@@ -162,9 +174,28 @@ const normalizeResult = (value: unknown, index: number): ResultType | null => {
   };
 };
 
+const normalizeDomainRow = (value: unknown): DomainRow | null => {
+  if (!isRecord(value)) return null;
+  const domain = getString(value.domain);
+  if (!domain) return null;
+  const score = Number(value.risk_score ?? 0);
+  return {
+    domain,
+    pageCount: Number(value.page_count ?? 0),
+    score: Number.isFinite(score) ? score : 0,
+    riskLevel: normalizeRiskLevel(getString(value.risk_level, "")),
+    date: getString(value.discovered_date, "時間未提供"),
+  };
+};
+
 export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
-  const [data, setData] = useState<ResultType[]>([]);
+  const [data, setData] = useState<DomainRow[]>([]);
   const [selected, setSelected] = useState<ResultType | null>(null);
+  // 展開中的網域，以及已經抓回來的網頁清單（同一個網域不重複抓）
+  const [expanded, setExpanded] = useState<string | null>(null);
+  const [pages, setPages] = useState<Record<string, ResultType[]>>({});
+  const [pagesLoading, setPagesLoading] = useState<string | null>(null);
+  const [pagesError, setPagesError] = useState<string | null>(null);
 
   // 代表圖不再夾帶在清單裡——每張 base64 可以到 600 KB，一頁 50 筆就近 10 MB。
   // 改成點開明細時才去拿那一筆的圖。
@@ -217,6 +248,7 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
       const query = new URLSearchParams({
         page: String(page),
         limit: String(CRAWLER_LIMIT),
+        group: "domain",
       });
       const response = await authFetch(`/api/crawler/automated_24h_list/?${query}`, {
         headers: { Accept: "application/json" },
@@ -242,10 +274,10 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
       const responseTotalPages = Number(
         pagination?.total_pages ?? (rawData.length > 0 ? 1 : 0)
       );
+      // 順序由後端決定（最嚴重的網域在前），前端不要再排一次
       const results = rawData
-        .map(normalizeResult)
-        .filter((item): item is ResultType => item !== null)
-        .sort((first, second) => second.score - first.score);
+        .map(normalizeDomainRow)
+        .filter((item): item is DomainRow => item !== null);
 
       setData(results);
       setStats({
@@ -264,14 +296,12 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
       setLastUpdated(new Date());
 
       callbackRef.current?.(
-        results
-          .filter((item) => item.websiteUrl)
-          .map((item) => ({
-            url: item.websiteUrl,
-            score: item.score,
-            riskLevel: getRiskText(item.riskLevel),
-            detectedAt: item.time,
-          })),
+        results.map((item) => ({
+          url: item.domain,
+          score: item.score,
+          riskLevel: getRiskText(item.riskLevel),
+          detectedAt: item.date,
+        })),
         { pendingTotal: Number(responseStats?.medium ?? 0) }
       );
     } catch (requestError) {
@@ -282,6 +312,44 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
       setLoading(false);
     }
   }, []);
+
+  // 展開時才抓這個網域底下的網頁。抓過就留著，重複開合不會再打一次。
+  const toggleDomain = useCallback(async (domain: string) => {
+    if (expanded === domain) {
+      setExpanded(null);
+      return;
+    }
+    setExpanded(domain);
+    setPagesError(null);
+    if (pages[domain]) return;
+
+    setPagesLoading(domain);
+    try {
+      const query = new URLSearchParams({
+        domain,
+        page: "1",
+        limit: String(DOMAIN_PAGE_LIMIT),
+      });
+      const response = await authFetch(
+        `/api/crawler/automated_24h_list/?${query}`,
+        { headers: { Accept: "application/json" } }
+      );
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+      const payload: unknown = await response.json();
+      const rawData =
+        isRecord(payload) && Array.isArray(payload.data) ? payload.data : [];
+      const rows = rawData
+        .map(normalizeResult)
+        .filter((item): item is ResultType => item !== null);
+      setPages((current) => ({ ...current, [domain]: rows }));
+    } catch (requestError) {
+      const message =
+        requestError instanceof Error ? requestError.message : "未知錯誤";
+      setPagesError(`無法取得 ${domain} 的網頁清單：${message}`);
+    } finally {
+      setPagesLoading(null);
+    }
+  }, [expanded, pages]);
 
   useEffect(() => {
     setLoading(true);
@@ -301,6 +369,7 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
   const changePage = (page: number) => {
     if (loading || page < 1 || page > totalPages || page === currentPage) return;
     setSelected(null);
+    setExpanded(null);
     setCurrentPage(page);
   };
 
@@ -381,32 +450,98 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
             </div>
           ) : (
             <div className="space-y-4">
-              {filtered.map((item) => (
-                <button
-                  type="button"
-                  key={item.id}
-                  onClick={() => openDetail(item)}
-                  className="w-full text-left border-2 border-gray-200 p-5 rounded-2xl hover:shadow-lg hover:border-[#2B4C7E] transition"
-                >
-                  <div className="min-w-0">
-                    <p className="text-sm text-gray-400">{item.time}</p>
-                    {item.websiteUrl && (
-                      <p className="font-bold text-blue-600 break-all mt-1"><ExternalLink url={item.websiteUrl} /></p>
+              {filtered.map((item) => {
+                const isOpen = expanded === item.domain;
+                const childPages = pages[item.domain] ?? [];
+                return (
+                  <div
+                    key={item.domain}
+                    className={`border-2 rounded-2xl transition ${
+                      isOpen
+                        ? "border-[#2B4C7E] shadow-lg"
+                        : "border-gray-200 hover:border-[#2B4C7E] hover:shadow-lg"
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => toggleDomain(item.domain)}
+                      aria-expanded={isOpen}
+                      className="w-full text-left p-5"
+                    >
+                      <div className="flex items-start gap-3">
+                        <ChevronRight
+                          className={`mt-1 shrink-0 text-gray-400 transition-transform ${
+                            isOpen ? "rotate-90" : ""
+                          }`}
+                          size={20}
+                        />
+                        <div className="min-w-0 flex-1">
+                          <p className="text-sm text-gray-400">
+                            最後發現：{item.date}
+                          </p>
+                          <p className="font-bold text-[#2B4C7E] break-all mt-1">
+                            {item.domain}
+                          </p>
+                          <p className="text-sm text-gray-500 mt-1">
+                            這個網域底下有 {item.pageCount} 個網頁被判讀
+                            {/* 摘要列顯示的是「最嚴重的那一頁」，不是平均——
+                                分流時要先看最該看的，平均會把一頁高分稀釋掉 */}
+                            ，以下分數是其中最高的一頁
+                          </p>
+                        </div>
+                      </div>
+                      <div className="mt-4 flex items-center gap-3">
+                        <div className="min-w-0 flex-1 bg-gray-200 h-2 rounded-full overflow-hidden">
+                          <div
+                            className={`${getRiskProgressColor(item.riskLevel)} h-2 rounded-full`}
+                            style={{ width: `${Math.min(100, Math.max(0, item.score))}%` }}
+                          />
+                        </div>
+                        <span className={`w-14 shrink-0 text-right text-lg font-bold ${getRiskScoreColor(item.riskLevel)}`}>
+                          {item.score}%
+                        </span>
+                      </div>
+                    </button>
+
+                    {isOpen && (
+                      <div className="border-t border-gray-200 bg-gray-50 px-5 py-4 rounded-b-2xl">
+                        {pagesLoading === item.domain ? (
+                          <p className="text-gray-400 text-sm">載入這個網域的網頁中...</p>
+                        ) : pagesError ? (
+                          <p className="text-red-500 text-sm">{pagesError}</p>
+                        ) : childPages.length === 0 ? (
+                          <p className="text-gray-400 text-sm">沒有可顯示的網頁</p>
+                        ) : (
+                          <div className="space-y-2">
+                            {childPages.map((child) => (
+                              <button
+                                type="button"
+                                key={child.id}
+                                onClick={() => openDetail(child)}
+                                className="w-full text-left rounded-xl border border-gray-200 bg-white px-4 py-3 hover:border-[#2B4C7E] transition"
+                              >
+                                <div className="flex items-center gap-3">
+                                  <div className="min-w-0 flex-1">
+                                    <p className="text-sm text-blue-600 break-all">
+                                      <ExternalLink url={child.websiteUrl} />
+                                    </p>
+                                    <p className="text-xs text-gray-400 mt-1">
+                                      {child.time}　案件編號：{child.caseNumber}
+                                    </p>
+                                  </div>
+                                  <span className={`shrink-0 text-base font-bold ${getRiskScoreColor(child.riskLevel)}`}>
+                                    {child.score}%
+                                  </span>
+                                </div>
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                     )}
                   </div>
-                  <div className="mt-4 flex items-center gap-3">
-                    <div className="min-w-0 flex-1 bg-gray-200 h-2 rounded-full overflow-hidden">
-                      <div
-                        className={`${getRiskProgressColor(item.riskLevel)} h-2 rounded-full`}
-                        style={{ width: `${Math.min(100, Math.max(0, item.score))}%` }}
-                      />
-                    </div>
-                    <span className={`w-14 shrink-0 text-right text-lg font-bold ${getRiskScoreColor(item.riskLevel)}`}>
-                      {item.score}%
-                    </span>
-                  </div>
-                </button>
-              ))}
+                );
+              })}
             </div>
           )}
 
