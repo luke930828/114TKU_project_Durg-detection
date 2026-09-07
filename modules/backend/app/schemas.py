@@ -184,6 +184,9 @@ class YOLOAnalysisReport(BaseModel):
     #
     # 另外 Any 沒有任何長度上限，等於在 SEC-16 修好的地方開一個新洞。
     ocr_results: Optional[OCRResults] = None
+    # 「這一頁根本沒有圖」跟「有圖但沒看到東西」是兩件事，畫面上要分得出來。
+    # 前者是爬蟲沒抓到任何商品圖，後者是 YOLO 跑完但沒有檢出。
+    no_images: bool = False
 
 class NLPAnalysisReport(BaseModel):
     """NLP 的回報。上限的理由同 YOLOAnalysisReport。"""

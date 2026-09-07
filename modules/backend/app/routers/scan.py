@@ -2,6 +2,7 @@
 import os
 import time
 import traceback
+from datetime import datetime
 
 import requests
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,6 +14,10 @@ from utils import is_whitelisted as is_whitelisted_domain
 from schemas import FrontendScanRequest
 
 router = APIRouter(tags=["網址即時識別模組"])
+
+# 一筆未完成的紀錄要放置多久，才判定它是卡住、值得重派一次爬蟲。
+# 一頁的正常流程（爬蟲 → NLP → YOLO 逐張推論）大約一到兩分鐘，抓五分鐘留足餘裕。
+RETRY_AFTER_SECONDS = 300
 
 
 @router.post("/api/scan_target/", summary="即時掃描單一網址（具備未完成任務自動修復機制）")
@@ -51,7 +56,27 @@ def scan_target_url(request_data: FrontendScanRequest, db: Session = Depends(get
                 "data": existing_record
             }
         else:
-            print(f"發現未完成的歷史紀錄 ({target_url})，可能上次有 AI 引擎離線，系統自動重新派發任務...")
+            # 未完成的紀錄要不要重派，取決於它「卡多久了」。
+            #
+            # 前端每 20 秒輪詢一次，而輪詢打的就是這支端點。原本只要紀錄還沒完成
+            # 就無條件重派，等於每 20 秒叫爬蟲重抓同一頁一次——實測 15 分鐘內
+            # 對同一個網址發了 33 次爬蟲請求，把 AI 引擎的佇列灌滿，反而讓它
+            # 更不可能跑完，變成自己拖垮自己。
+            #
+            # 改成只有「真的卡住」才重派：剛派出去還在跑的（RETRY_AFTER_SECONDS
+            # 之內）直接回報處理中，讓前端繼續等就好。
+            age = None
+            if existing_record.created_at:
+                age = (datetime.now() - existing_record.created_at).total_seconds()
+
+            if age is not None and age < RETRY_AFTER_SECONDS:
+                return {
+                    "status": "processing",
+                    "source": "in_progress",
+                    "message": "這個網址正在分析中，請稍候。",
+                }
+
+            print(f"發現卡住的歷史紀錄 ({target_url}，已經 {age} 秒)，可能上次有 AI 引擎離線，系統自動重新派發任務...")
 
     # 3. 呼叫爬蟲 (不管是全新網址，還是要修復半殘紀錄，都會走到這裡)
     # 同 utils.py：沒設就爆掉，不要靜靜連到某台特定機器

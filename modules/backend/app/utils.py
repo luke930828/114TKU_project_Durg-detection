@@ -164,6 +164,38 @@ def dispatch_to_ai_engines(url: str, html_content: str, images: list):
         print(f"派發至 NLP 引擎失敗: {e}")
 
     # 第二階段：派發給 YOLO 的任務 (圖片)
+    #
+    # 沒有圖片時要明確寫「無影像可分析」，不能讓 yolo_details 留在「影像分析中...」。
+    #
+    # 那個字串是所有地方判斷「還在跑」的依據：scan.py 用它決定要不要重新派發、
+    # 前端用它決定要不要繼續輪詢。一頁本來就沒有商品圖時，YOLO 永遠不會被呼叫，
+    # 那個字串就永遠不會被覆蓋——結果是：
+    #
+    #   前端每 20 秒輪詢一次，而輪詢是重新 POST /api/scan_target/，
+    #   那支端點看到「不完整」又重新派發爬蟲 → 每 20 秒真的重爬一次那個網頁。
+    #   實測 15 分鐘內爬蟲收到 33 次同一種手動請求，而畫面永遠在轉。
+    #   資料庫裡累積了 312 筆這種「NLP 完成、YOLO 永遠分析中」的紀錄。
+    #
+    # 「沒有圖可分析」是一個確定的結果，不是中間狀態，要如實寫進去。
+    if not images:
+        print("這一頁沒有可分析的圖片，直接把 YOLO 結果記成「無影像」。")
+        try:
+            requests.post(
+                BACKEND_NLP_REPORT_URL.replace("/api/nlp/report/", "/api/ai_result/report/"),
+                json={
+                    "url": url,
+                    "risk_score": 0,
+                    "yolo_objects": [],
+                    "is_valid_drug": False,
+                    "class_metadata": {},
+                    "representative_image_base64": None,
+                    "representative_image_detections": [],
+                    "no_images": True,
+                },
+                headers=INTERNAL_HEADERS, timeout=10)
+        except Exception as e:
+            print(f"回報「無影像」失敗：{e}")
+
     if images and len(images) > 0:
         print(f"準備將 {len(images)} 張圖片逐一派發給 YOLO...")
         

@@ -20,8 +20,17 @@ def receive_ai_analysis_result(
     # 串接後超長的話 MySQL 會丟 DataError，整個請求 500 而且分析結果不會寫進去。
     # schema 已經擋掉離譜的輸入，這裡是第二層——欄位長度是資料庫的事實，
     # 不該依賴呼叫端剛好沒送太長。
-    yolo_str = (", ".join(report.yolo_objects) if report.yolo_objects
-                else "無檢出影像特徵")[:500]
+    # 三種情況要寫成三種不同的字，不能混為一談：
+    #   有檢出        → 類別清單
+    #   有圖但沒檢出   → 「無檢出影像特徵」
+    #   根本沒有圖     → 「無影像可分析」
+    # 最後一種以前是留著「影像分析中...」不動，結果前端永遠等不到結束（見 utils.py）。
+    if report.yolo_objects:
+        yolo_str = ", ".join(report.yolo_objects)[:500]
+    elif report.no_images:
+        yolo_str = "無影像可分析（這一頁沒有商品圖）"
+    else:
+        yolo_str = "無檢出影像特徵"
 
     # ocr_results 在 schema 裡是 OCRResults 這個 Pydantic 模型（不是 dict），
     # 直接指派給 JSON 欄位的話 SQLAlchemy 序列化不了會丟 TypeError。

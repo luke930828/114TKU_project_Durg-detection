@@ -132,6 +132,13 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
   // 使用者取消後，舊請求即使回傳也不會更新畫面
   const sessionIdRef = useRef(0);
 
+  // 輪詢上限：20 秒一次、最多 21 次，大約七分鐘。
+  // 以前沒有上限，遇到後端沒有寫回結果的紀錄就會一直轉，使用者只能自己重整；
+  // 而且每次輪詢都會讓後端重新派一次爬蟲任務，等於一邊空轉一邊加重負擔。
+  const POLL_INTERVAL_MS = 20000;
+  const POLL_MAX_ATTEMPTS = 21;
+  const pollAttemptRef = useRef(0);
+
   const BACKEND_PATH = "/api/scan_target/";
 
   const representativeImageBase64 = analysisData?.representative_image_base64;
@@ -198,6 +205,7 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
   ) => {
     stopPolling();
     setIsPolling(true);
+    pollAttemptRef.current = 0;
 
     pollingRef.current = setInterval(async () => {
       // 已經不是目前這一次分析，直接停止
@@ -206,8 +214,22 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
         return;
       }
 
+      pollAttemptRef.current += 1;
+
+      if (pollAttemptRef.current > POLL_MAX_ATTEMPTS) {
+        stopPolling();
+        abortCurrentRequest();
+        setLoading(false);
+        setServerMessage(
+          "分析逾時：等待超過七分鐘仍未取得完整結果，已停止等待。" +
+            "本次進度已存到後台，稍後可到「風險網址列表」查看，或重新分析一次。"
+        );
+        console.warn("輪詢已達上限，停止等待。");
+        return;
+      }
+
       console.log(
-        "🔄 系統背景自動輪詢中，檢查 YOLO 與 NLP 是否完成..."
+        `🔄 系統背景自動輪詢中（第 ${pollAttemptRef.current}/${POLL_MAX_ATTEMPTS} 次），檢查 YOLO 與 NLP 是否完成...`
       );
 
       const controller = new AbortController();
@@ -295,7 +317,7 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
           abortControllerRef.current = null;
         }
       }
-    }, 20000);
+    }, POLL_INTERVAL_MS);
   };
 
   // 開始網址分析
