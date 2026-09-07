@@ -21,7 +21,7 @@ services:
       # 應用程式專用帳號，權限只到這一個資料庫。
       # 以前 backend 直接用 root——連線資訊一旦外洩，整個 MySQL 實例
       # （含其他資料庫、mysql.user）都跟著暴露。
-      # ⚠️ MYSQL_USER/PASSWORD 只在「資料庫第一次建立」時生效。
+      # MYSQL_USER/PASSWORD 只在「資料庫第一次建立」時生效。
       #    既有安裝要自己建，見 README-docker.md。
       MYSQL_USER: ${DB_USER:-drugapp}
       MYSQL_PASSWORD: ${DB_PASSWORD}
@@ -208,7 +208,7 @@ services:
               device_ids: ["0"]
               capabilities: [gpu]
         limits:
-          # ⚠️ 這個數字一定要小於 .wslconfig 的 memory（目前 12GB）。
+          # 這個數字一定要小於 .wslconfig 的 memory（目前 12GB）。
           #
           # 原本寫 12G，跟整台 WSL 虛擬機一樣大——那等於沒有上限：cgroup 永遠
           # 不會先觸發，容器可以一路吃到整台機器沒東西為止，最後由核心用

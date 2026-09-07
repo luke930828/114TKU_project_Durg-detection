@@ -52,7 +52,7 @@ RUN --mount=type=cache,target=/root/.cache/pip \
 # ——寫兩份遲早會不一致，而不一致的下場是「build 時抓了 A、執行時要 B」，
 # 又變回執行時下載。只複製 ocr.py 這一個檔案，避免整個 app/ 的改動
 # 讓這 295 MB 的一層失效。
-# ⚠️ 一定要重試。EasyOCR 的 download_and_unzip 用 urlretrieve 直接下載，
+# 一定要重試。EasyOCR 的 download_and_unzip 用 urlretrieve 直接下載，
 #    沒有任何重試或續傳；模型放在 jaided.ai，226 MB 抓到一半斷線就整個失敗：
 #        ContentTooShortError: got only 135249920 out of 209821039 bytes
 #    2026-09-03 第一次 build 就是這樣掛掉的。

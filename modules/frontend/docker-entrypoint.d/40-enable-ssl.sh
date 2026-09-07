@@ -9,7 +9,7 @@
 #   沒有憑證 → 純 HTTP（可以跑、可以通過 ACME 驗證）
 #   有憑證   → port 80 只留 ACME 與轉址，其餘全部走 443
 #
-# ⚠️ 轉址一定要放在 location 裡，不能放在 server 層。
+# 轉址一定要放在 location 裡，不能放在 server 層。
 #    server 層的 return 在 rewrite 階段就執行，會優先於所有 location——
 #    包括 ACME 那個 location ^~。第一版就是這樣寫的，結果
 #    /.well-known/acme-challenge/ 回 301，Let's Encrypt 永遠驗證不過。
@@ -25,7 +25,7 @@ PRISTINE=/etc/nginx/default.conf.pristine
 FULLCHAIN="$CERT_DIR/fullchain.pem"
 PRIVKEY="$CERT_DIR/privkey.pem"
 
-# ⚠️ 這支腳本必須是冪等的。
+# 這支腳本必須是冪等的。
 #
 # nginx 官方 image 的 entrypoint 每次「啟動」都會跑一遍 docker-entrypoint.d/，
 # 不是只有「建立容器」時跑。容器重新建立時 default.conf 是 image 裡那份乾淨的，

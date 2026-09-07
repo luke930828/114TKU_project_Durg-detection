@@ -40,14 +40,9 @@ def calculate_multimodal_risk_100_scale(nlp_raw_score: int, yolo_raw_score: int)
         risk_level = "極高風險"                      # 兩個引擎都指向毒品
     elif nlp_raw_score >= NLP_HIGH:
         risk_level = "高風險 (優先人工覆核)"          # 文字確定，影像沒東西可看
-    # 舊寫法（勿用）：... or yolo_raw_score >= NLP_HIGH
-    # 上面才剛說「YOLO 不參與要不要覆核的判定」，這一行卻讓 YOLO 單獨把東西
-    # 推進覆核清單，是當初漏改的。實測代價很大：
-    #   線上資料 中風險 155 筆，其中 121 筆（78%）是這條觸發的，那批 nlp 平均 0 分
-    #   217 筆人工標註裡符合這條的有 12 筆，真陽性 0 個，命中率 0%
-    #   拿掉之後少標 12 筆，漏掉的真毒品網站是 0 個
-    # 也就是說它只產生誤報。YOLO 在乾淨的商品照上很容易把保健食品、化妝品、
-    # 食品看成毒品，而文字完全沒有訊號時那幾乎一定是誤判。
+    # 不要加回 `or yolo_raw_score >= NLP_HIGH`：YOLO 不參與「要不要覆核」的判定。
+    # 實測那條規則只產生誤報——YOLO 在乾淨的商品照上很容易把保健食品、化妝品
+    # 看成毒品，而文字完全沒有訊號時，那幾乎一定是誤判。
     elif nlp_raw_score >= NLP_MEDIUM:
         risk_level = "中風險 (建議人工覆核)"
     else:
@@ -56,35 +51,15 @@ def calculate_multimodal_risk_100_scale(nlp_raw_score: int, yolo_raw_score: int)
     return combined, risk_level
 
 
-# needs_review() 已移除。
-#
-# 它長這樣：
-#     return nlp_raw_score >= NLP_HIGH or yolo_raw_score >= NLP_HIGH
-#
-# docstring 寫「分級規則只寫在這個檔案，避免又出現兩套標準」，但它自己就是
-# 第二套——那個 or 正是實測後刪掉的「YOLO 單獨高分也送覆核」：
-#
-#     217 筆人工標註中，符合 yolo>=90 而 nlp<90 的有 14 筆
-#     真陽性 0 個，全部是加密貨幣報價、WordPress 外掛頁、護髮產品這類
-#     precision 0.772 → 0.706，recall 完全沒有改善（漏報一樣 3 個）
-#
-# 全專案沒有任何地方呼叫它，但名字取得像「就是這個」，下一個人很可能直接拿來
-# 用，那條刪掉的規則就會悄悄回來。要判斷等級請用
-# calculate_multimodal_risk_100_scale()，那是唯一的來源。
+# needs_review() 已移除：它是第二套分級標準，內容正是實測後刪掉的
+# 「YOLO 單獨高分也送覆核」。全專案沒有任何地方呼叫它，但名字取得像「就是這個」，
+# 留著遲早會被撿回去用。要判斷等級請用 calculate_multimodal_risk_100_scale()。
 
 
-# 服務之間的呼叫要重試
-# ────────────────────
-# compose 一直有設 HTTP_TIMEOUT / HTTP_RETRIES，但程式碼從來沒有讀過它們——
-# 設了等於沒設（跟稽核抓到的 UVICORN_EXTRA_ARGS 同一類）。
-#
-# 沒有重試的後果 2026-09-03 實際發生了：重建 nlp 容器的那七分鐘，Docker 的 DNS
-# 解析不到 nlp 這個名字，
-#     Failed to resolve 'nlp' ([Errno -2] Name or service not known)
-# 那段時間爬蟲進來的 226 筆，NLP 分析全部靜靜掉了——只印一行錯誤就繼續，
-# 那些網址永遠停在「文字分析中...」，而且沒有任何地方會告訴你。
-#
-# 容器重建、服務重啟、暫時性的網路問題都是常態，不是異常。重試幾次就能救回來。
+# 服務之間的呼叫要重試。
+# compose 一直有設 HTTP_TIMEOUT / HTTP_RETRIES，但程式碼從來沒讀過——設了等於沒設。
+# 容器重建、服務重啟、暫時性的 DNS 解析失敗都是常態；沒有重試的話，那段時間的
+# 分析會靜靜地掉，網址永遠停在「文字分析中...」，而且沒有任何地方會告訴你。
 HTTP_TIMEOUT = int(os.getenv("HTTP_TIMEOUT", "10"))
 HTTP_RETRIES = int(os.getenv("HTTP_RETRIES", "2"))
 
@@ -109,7 +84,7 @@ def post_with_retry(url: str, *, json=None, headers=None, timeout=None, retries=
                 print(f"[重試 {i + 1}/{attempts - 1}] {url} 連線失敗，{delay}s 後再試：{e.__class__.__name__}")
                 time.sleep(delay)
                 delay *= 2
-    print(f"❌ {url} 連續 {attempts} 次都連不上，放棄：{last}")
+    print(f"[錯誤] {url} 連續 {attempts} 次都連不上，放棄：{last}")
     return None
 
 
@@ -166,17 +141,9 @@ def dispatch_to_ai_engines(url: str, html_content: str, images: list):
     # 第二階段：派發給 YOLO 的任務 (圖片)
     #
     # 沒有圖片時要明確寫「無影像可分析」，不能讓 yolo_details 留在「影像分析中...」。
-    #
-    # 那個字串是所有地方判斷「還在跑」的依據：scan.py 用它決定要不要重新派發、
-    # 前端用它決定要不要繼續輪詢。一頁本來就沒有商品圖時，YOLO 永遠不會被呼叫，
-    # 那個字串就永遠不會被覆蓋——結果是：
-    #
-    #   前端每 20 秒輪詢一次，而輪詢是重新 POST /api/scan_target/，
-    #   那支端點看到「不完整」又重新派發爬蟲 → 每 20 秒真的重爬一次那個網頁。
-    #   實測 15 分鐘內爬蟲收到 33 次同一種手動請求，而畫面永遠在轉。
-    #   資料庫裡累積了 312 筆這種「NLP 完成、YOLO 永遠分析中」的紀錄。
-    #
-    # 「沒有圖可分析」是一個確定的結果，不是中間狀態，要如實寫進去。
+    # 那個字串是所有地方判斷「還在跑」的依據（scan.py 用它決定要不要重新派發、
+    # 前端用它決定要不要繼續輪詢），一頁本來就沒有商品圖時它永遠不會被覆蓋，
+    # 畫面就會一直轉。「沒有圖可分析」是確定的結果，不是中間狀態。
     if not images:
         print("這一頁沒有可分析的圖片，直接把 YOLO 結果記成「無影像」。")
         try:
@@ -308,20 +275,11 @@ def like_pattern(keyword: str) -> str:
     return f"%{text}%"
 
 
-# OCR 文字要「合併」網頁文字後再判一次
-# ──────────────────────────────────
-# 第一版是把 OCR 文字「單獨」送去 NLP、分數比較高才覆蓋。那是錯的，而且錯得
-# 很難看：模型拿到的是一袋沒有上下文的碎片，2026-09-03 實測結果——
-#
-#   微波爐商品頁      → 100 分，關鍵字 'IRE', 'STAPT', 'GEHUINE'
-#   電動腳踏車商品頁  → 100 分，關鍵字 'meedsy', 'Offers'
-#
-# 而且「比較高才覆蓋」的規則把這些假警報永久鎖住，還順手把原本網頁文字算出來
-# 的關鍵字整組蓋掉——承辦人員看到的變成一堆從包裝上讀到的碎字，原本真正的
-# 判斷依據不見了。
-#
-# 改成合併：圖片裡的字跟網頁上的字本來就是同一頁的內容，一起判才有上下文。
-# 出來也只有一組分數、一組關鍵字，不會有「兩套答案」的問題。
+# OCR 文字要「合併」網頁文字後再判一次，不是單獨送。
+# 單獨送的話模型拿到的是一袋沒有上下文的碎片，會把普通商品頁判成高分；
+# 而且「分數比較高才覆蓋」還會把原本從網頁文字算出來的關鍵字整組蓋掉。
+# 圖片裡的字跟網頁上的字本來就是同一頁的內容，一起判才有上下文，
+# 出來也只有一組分數與關鍵字，不會有兩套答案。
 OCR_MIN_CONFIDENCE = 0.5     # EasyOCR 低於這個值的多半是雜訊（實測 0.36 那段是 'SHIPPIHGORLDWIIDE'）
 OCR_MIN_CHARS = 2            # 一兩個字元的碎片沒有語意
 OCR_MIN_TOTAL_CHARS = 10     # 全部串起來還不到 10 個字就別浪費一次推論

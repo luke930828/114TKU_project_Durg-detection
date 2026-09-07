@@ -61,11 +61,11 @@ def main():
                 ok += 1 if r.status_code == 200 else 0
                 fail += 0 if r.status_code == 200 else 1
                 if r.status_code != 200 and fail <= 5:
-                    print(f"  ⚠️ {r.status_code} {r.text[:150]}", flush=True)
+                    print(f"  [警告] {r.status_code} {r.text[:150]}", flush=True)
             except Exception as e:                                  # noqa: BLE001
                 fail += 1
                 if fail <= 5:
-                    print(f"  ⚠️ {type(e).__name__}: {e}", flush=True)
+                    print(f"  [警告] {type(e).__name__}: {e}", flush=True)
             time.sleep(DELAY)
 
             if n % 50 == 0 or n == len(ids):

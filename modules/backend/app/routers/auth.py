@@ -117,14 +117,8 @@ def login_for_access_token(login_data: UserLogin, db: Session = Depends(get_db))
         "status": "success",
         "message": f"登入成功！{user.account}",
         "access_token": encrypted_token,
-        # 把自己的帳號與角色一起回去，前端才知道要不要顯示管理員專屬的功能。
-        # 這不算洩漏——使用者本來就知道自己是誰、有什麼權限。
-        #
-        # 沒有這個之前，前端無從判斷，只好把「人員與權限管理」顯示給所有人，
-        # 一般人員點下去才撞 403。看得到卻永遠進不去，比一開始就不顯示更糟。
-        #
-        # ⚠️ 這只用來決定「畫面上要不要出現」。真正的權限仍然由後端的
-        #    verify_admin 把關——前端的判斷是使用者體驗，不是安全機制。
+        # 回傳自己的帳號與角色，前端才知道要不要顯示管理員專屬的功能。
+        # 這只決定「畫面上要不要出現」，真正的權限仍由後端的 verify_admin 把關。
         "account": user.account,
         "role": user.role,
     }

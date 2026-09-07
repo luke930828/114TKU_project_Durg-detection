@@ -10,17 +10,10 @@ router = APIRouter(tags=["白名單維護"])
 
 # 模組六：白名單維護管理
 
-# 權限設計：新增開放給一般人員，刪除保留給管理員
-# ────────────────────────────────────────────
-# 名單維護是承辦人員的日常工作——看到誤判要能立刻排除、拿到情資要能立刻標記。
-# 每次都要找管理員的話，實務上的結果是「大家乾脆不維護」。
-#
-# 但刪除留給管理員，因為那是破壞性的方向：
-#   刪白名單 → 一個已經人工確認過的正常網站，重新被當成可疑目標
-#   刪黑名單 → 一個已經確認的毒品網站，被取消標記
-# 新增最壞的情況是多一筆錯的資料，刪除最壞的情況是失去既有的判斷。
-#
-# 兩種操作都會寫進 audit_logs，追得到是誰做的。
+# 權限設計：新增開放給一般人員，刪除保留給管理員。
+# 名單維護是承辦人員的日常，每次都要找管理員的話大家就乾脆不維護了；
+# 但刪除是把「已經確認過的判斷」取消掉，風險跟新增不對等。
+# 兩種操作都會寫進 audit_logs。
 
 
 @router.get("/api/whitelist/", summary="查看白名單清單")
@@ -40,18 +33,12 @@ def list_whitelist(
         )
     return query.order_by(database.WhitelistWebsite.created_at.desc()).all()
 
-# 👇 這裡把 verify_super_admin 換成了 verify_admin
+# 這裡把 verify_super_admin 換成了 verify_admin
 @router.post("/api/whitelist/", summary="新增白名單（一般人員可用）")
 def add_whitelist(data: WhitelistCreate, admin: database.User = Depends(get_current_user), db: Session = Depends(get_db)):
-    # 重複檢查要用「網域」，不能用「完全相同的網址」。
-    #
-    # 白名單實際上是用網域比對的（is_whitelisted），所以同一個網域只要換一個
-    # 路徑就能重複加進來——線上實際發生過：wooessential.com 有兩筆，
-    # 一筆是誤判回報的商品頁、一筆是手動加的另一個商品頁。清單會越來越髒，
-    # 而且刪掉其中一筆使用者會以為已經移出白名單，其實還被另一筆擋著。
-    #
-    # 反過來，原本的錯誤訊息也講不清楚狀況：使用者貼一個新網址進來，
-    # 看到「該網址已存在」會困惑——他明明沒加過這個網址。
+    # 重複檢查要用「網域」，不能用「完全相同的網址」：白名單本來就是用網域比對的
+    # （is_whitelisted），比完整網址的話，同一個網域換個路徑就能重複加進來，
+    # 清單會越來越髒，而且刪掉其中一筆還會被另一筆擋著。
     domain = registrable_domain(data.url)
     if not domain:
         raise HTTPException(status_code=400, detail="網址格式無效，解析不出網域。")
@@ -69,12 +56,8 @@ def add_whitelist(data: WhitelistCreate, admin: database.User = Depends(get_curr
                 db=db, user_id=admin.user_id, action_type="清除白名單網域的殘留分析",
                 details=f"網域 {domain} 已在白名單（{already.url}），"
                         f"清除殘留的 {removed} 筆分析結果"[:500])
-        # 訊息要講清楚「你填的沒有被採用」。
-        #
-        # 這條路徑會直接 return，不建立新紀錄——但表單是強制填名稱與原因的，
-        # 使用者填完按下去，東西被默默丟掉，然後在清單上看到別人幾天前寫的
-        # 原因，會以為系統存錯了。實際回報過：「原因跟我填的不一樣」。
-        # 沉默地忽略使用者的輸入，比報錯還糟。
+        # 這條路徑直接 return、不建立新紀錄，所以訊息要講清楚「你填的沒有被採用」，
+        # 否則使用者會在清單上看到別人寫的原因，以為系統存錯了。
         when = already.created_at.strftime("%Y-%m-%d") if already.created_at else "先前"
         note = ""
         if (data.title and data.title != already.title) or \
@@ -120,7 +103,7 @@ def add_whitelist(data: WhitelistCreate, admin: database.User = Depends(get_curr
     
     return {"status": "success", "message": f"成功由管理員 {admin.account} 新增白名單。"}
 
-# 👇 這裡的刪除也一併把 verify_super_admin 換成了 verify_admin
+# 這裡的刪除也一併把 verify_super_admin 換成了 verify_admin
 @router.delete("/api/whitelist/{id}", summary="管理員：刪除白名單")
 def delete_whitelist(id: int, admin: database.User = Depends(verify_admin), db: Session = Depends(get_db)):
     target = db.query(database.WhitelistWebsite).filter(database.WhitelistWebsite.id == id).first()

@@ -411,12 +411,8 @@ def get_automated_24h_results(
     )
 
     # bucket 讓前端不必自己撈全部再過濾。
-    #
-    # 為什麼「高風險」歸在 pending 而不是 blacklist：那一級的全名就是
-    # 「高風險 (優先人工覆核)」，模型的意思是「這個要優先給人看」，
-    # 不是「已經確認是毒品網站」。以前前端把極高+高一起塞進黑名單，
-    # 結果 1540 筆標著「優先人工覆核」的網站一次都沒被人看過——
-    # 待確認清單裡只有 35 筆「建議」覆核的。優先順序整個顛倒。
+    # 「高風險」歸在 pending 而不是 blacklist：那一級的全名是「高風險 (優先人工覆核)」，
+    # 意思是要優先給人看，不是已經確認是毒品網站。
     if q and q.strip():
         keyword = q.strip()
         # 案件編號在前端是 ai_analysis_results.id（AIDetection.tsx 的

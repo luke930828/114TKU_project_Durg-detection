@@ -1,5 +1,5 @@
 
-## ⚠️ 已廢棄 — 請使用 engine_v2.py + main.py。此檔仍指向舊 Record 路徑，勿直接執行。
+## 已廢棄 — 請使用 engine_v2.py + main.py。此檔仍指向舊 Record 路徑，勿直接執行。
 
 ## 這是engine_v2.py 的基礎 複製品，這不是24h 執行檔
 

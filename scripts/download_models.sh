@@ -13,7 +13,7 @@ cd "$(dirname "$0")/.."
 MANIFEST="models/MODELS.txt"
 DEST="models"
 
-[ -f "$MANIFEST" ] || { echo "❌ 找不到 $MANIFEST"; exit 1; }
+[ -f "$MANIFEST" ] || { echo "[錯誤] 找不到 $MANIFEST"; exit 1; }
 mkdir -p "$DEST"
 
 sha_of() {
@@ -44,12 +44,12 @@ while IFS='|' read -r name url expected desc; do
       skipped=$((skipped + 1))
       continue
     fi
-    echo "⚠️  $name 已存在但雜湊不符，重新下載"
+    echo "[警告] $name 已存在但雜湊不符，重新下載"
   fi
 
-  echo "📥 下載 $name  ($desc)"
+  echo "下載 $name  ($desc)"
   if ! curl -fL --progress-bar -o "$target.tmp" "$url"; then
-    echo "   ❌ 下載失敗：$url"
+    echo "   [錯誤] 下載失敗：$url"
     echo "      確認 Release 已發布，且如果 repo 是 private 需要先 gh auth login"
     rm -f "$target.tmp"
     exit 1
@@ -57,19 +57,19 @@ while IFS='|' read -r name url expected desc; do
 
   if [ "$expected" = "請填入SHA256" ]; then
     actual="$(sha_of "$target.tmp")"
-    echo "   ⚠️  清單裡還沒填 SHA256。實際值是："
+    echo "   [警告] 清單裡還沒填 SHA256。實際值是："
     echo "      $actual"
     echo "      請把它填回 $MANIFEST"
   else
     actual="$(sha_of "$target.tmp")"
     if [ "$actual" != "$expected" ]; then
-      echo "   ❌ 校驗失敗！檔案可能損毀或被換過。"
+      echo "   [錯誤] 校驗失敗！檔案可能損毀或被換過。"
       echo "      預期：$expected"
       echo "      實際：$actual"
       rm -f "$target.tmp"
       exit 1
     fi
-    echo "   ✅ 校驗通過"
+    echo "   [OK] 校驗通過"
   fi
 
   mv "$target.tmp" "$target"

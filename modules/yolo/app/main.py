@@ -5,7 +5,7 @@ import threading
 import time
 from pathlib import Path
 
-# 1) Windows 主控台預設可能是 cp950/cp936 這類非 UTF-8 編碼，print() 印到 emoji（例如 ⚠️❌）會直接
+# 1) Windows 主控台預設可能是 cp950/cp936 這類非 UTF-8 編碼，print() 印到非 ASCII 字元會直接
 #    UnicodeEncodeError 炸掉——而且這個炸裂還會發生在 except 區塊自己的錯誤訊息裡，導致真正的錯誤被吃掉。
 # 2) line_buffering=True 是真正關鍵：只要 stdout 被導到檔案/管線（不是互動式終端機，log 蒐集一定是這樣），
 #    Python 預設會整段 buffer 起來，print() 不會馬上寫進 log，看起來就像背景任務卡住/沒反應——
@@ -39,42 +39,35 @@ MODEL_PATH = Path(os.getenv("MODEL_PATH", Path(__file__).parent / "models" / "be
 model = None
 try:
     model = YOLO(str(MODEL_PATH))
-    print(f"🎉 [成功] YOLOv8 自定義模型 {MODEL_PATH} 已順利載入！")
-    print("🚨 模型內部真正的 ID 對應是：", model.names)
+    print(f"[成功] YOLOv8 自定義模型 {MODEL_PATH} 已順利載入！")
+    print("模型內部真正的 ID 對應是：", model.names)
 
     # 啟動時先空跑一張，把 ultralytics 的 fuse() 在單執行緒狀態下做完。
-    #
-    # 不暖機的話，fuse() 會延到「第一次推論」才發生；而 FastAPI 是多執行緒的，
-    # 服務剛起來就湧入請求時，可能一個執行緒正在 fuse（fuse 會把 Conv 的 bn
-    # 併掉並刪除屬性），另一個同時走訪同一批模組，就會炸
-    # 「'Conv' object has no attribute 'bn'」，該批圖片整批沒有回報，
-    # 對應的紀錄永遠停在「影像分析中...」（2026-09-07 補跑時實際遇到 5 次）。
+    # 不暖機的話 fuse() 會延到第一次推論才發生，而 FastAPI 是多執行緒的：
+    # 一個執行緒正在 fuse（會刪掉 Conv 的 bn 屬性）、另一個同時走訪同一批模組，
+    # 就會炸「'Conv' object has no attribute 'bn'」，該批圖片整批不回報。
     try:
         model.predict(np.zeros((64, 64, 3), dtype=np.uint8), verbose=False)
-        print("🔥 模型暖機完成（fuse 已在單執行緒下做完）。")
+        print("模型暖機完成（fuse 已在單執行緒下做完）。")
     except Exception as warm_err:
-        print(f"⚠️ 模型暖機失敗（{warm_err}），服務照常啟動。")
+        print(f"[警告] 模型暖機失敗（{warm_err}），服務照常啟動。")
 except Exception as e:
-    print(f"🚨 [錯誤] 模型載入失敗，請確認 {MODEL_PATH} 是否存在！錯誤: {e}")
+    print(f"[錯誤] 模型載入失敗，請確認 {MODEL_PATH} 是否存在！錯誤: {e}")
 
-# 1b. 載入 OCR 引擎（EasyOCR，繁中+英文）。跟 YOLO 模型一樣：失敗就設成 None，不讓服務直接掛掉，
-# /health 會照實回報有沒有載成功，OCR 掛了不影響 YOLO 那邊的計分邏輯繼續運作（解耦設計）。
+# 1b. 載入 OCR 引擎（EasyOCR，繁中+英文）。跟 YOLO 模型一樣：失敗就設成 None、
+# 不讓服務直接掛掉，/health 照實回報，OCR 掛了不影響 YOLO 的計分（解耦設計）。
 #
-# 預設用 GPU。原本是刻意用 CPU，理由寫「這張卡只有 4GB 顯存，會跟 YOLO 搶」——
-# 那是開發機的狀況。部署機器是 RTX 5060 Ti / 16 GB，YOLO 跑著時只用 513 MiB。
-#
-# 而 CPU 模式實測 8 秒一張，爬蟲一分鐘產出約 90 張，差 12 倍：請求在 FastAPI 的
-# 執行緒池裡積壓，每一個都抱著一張 base64 圖片，記憶體以 0.5 GB/分往上爬，
-# 四分鐘就撞到容器上限被砍——手上沒做完的批次全部消失（2026-09-03 實際發生）。
-#
-# 顯存小的機器把 OCR_USE_GPU 設成 0，就退回原本的 CPU 行為。
+# 預設用 GPU。CPU 模式一張要 8 秒，跟爬蟲的產出速度差一個量級：請求會在
+# FastAPI 的執行緒池裡積壓，每一個都抱著一張 base64 圖片，記憶體一路往上爬到
+# 撞容器上限被砍，手上沒做完的批次全部消失。
+# 顯存小的機器把 OCR_USE_GPU 設成 0，就退回 CPU 行為。
 ocr_reader = None
 try:
     use_gpu = os.getenv("OCR_USE_GPU", "1") not in ("0", "false", "False", "")
     ocr_reader = load_ocr_reader(gpu=use_gpu)
-    print(f"🎉 [成功] EasyOCR（繁中+英文，{'GPU' if use_gpu else 'CPU'} 模式）已順利載入！")
+    print(f"[成功] EasyOCR（繁中+英文，{'GPU' if use_gpu else 'CPU'} 模式）已順利載入！")
 except Exception as e:
-    print(f"🚨 [錯誤] OCR 引擎載入失敗，本次啟動將不含文字擷取功能！錯誤: {e}")
+    print(f"[錯誤] OCR 引擎載入失敗，本次啟動將不含文字擷取功能！錯誤: {e}")
 
 # 2. 用「類別名稱」而非數字 ID 對齊 16 個 YOLO 類別，權重與組合加成定義於 ai_model/scoring.py
 # 用名稱比對可以在模型重新訓練、ID 洗牌時依然正確對齊，達成計分邏輯與模型 ID 的解耦。
@@ -124,22 +117,16 @@ def select_visible_detections(detections, visual_result):
         or d["confidence"] >= DISPLAY_CONFIDENCE_THRESHOLD
     ]
 
-# 🌟 全域計分板：用來統整同一個批次網址的多張圖片結果
+# 全域計分板：用來統整同一個批次網址的多張圖片結果
 BATCH_MEMORY = {}
 memory_lock = threading.Lock()
 
 # OCR 一次只跑一個。
-#
-# 2026-09-03 這個容器連續三次被全域 OOM 砍掉（anon-rss 8.4 / 7.7 / 7.6 GB），
-# 第三次把 Docker Desktop 的 WSL 整合一起帶走、六個服務全停。
-#
-# 原因：EasyOCR 是第二個模型，而且對「每一張圖」都跑一次 CPU 推論。
-# FastAPI 的 BackgroundTasks 會把同步函式丟進 threadpool（預設 40 條），
-# 爬蟲一頁送十張圖、同時好幾頁進來，等於幾十個 EasyOCR 推論並行，
-# 每一個都自己配一份張量。加 OCR 之前 yolo 峰值約 5 GB，加了之後 8 GB。
-#
-# 序列化之後只有一個推論在跑，其餘執行緒在這裡等——會變慢（CPU 模式一張約
-# 2 秒），但排隊遠比整台機器被打掛好。真的太慢再往上調，記憶體是線性增加的。
+# EasyOCR 是第二個模型，而且每一張圖都要跑一次推論；FastAPI 的 BackgroundTasks
+# 會把同步函式丟進 threadpool（預設 40 條），等於幾十個推論並行、每一個都自己配
+# 一份張量，記憶體峰值直接把容器打掛。
+# 序列化之後只有一個推論在跑，其餘執行緒在這裡等——會變慢，但排隊遠比整台機器
+# 被打掛好。真的太慢再往上調，記憶體是線性增加的。
 OCR_SEMAPHORE = threading.Semaphore(1)
 
 # OCR 前先把圖縮小。
@@ -183,7 +170,7 @@ def decode_base64_to_cv2(b64_data, task_id: str):
         nparr = np.frombuffer(img_data, np.uint8)
         return cv2.imdecode(nparr, cv2.IMREAD_COLOR), b64_data
     except Exception as decode_err:
-        print(f"[⚠️ 解碼炸裂] Base64 解析失敗 (Task: {task_id}): {decode_err}")
+        print(f"[解碼炸裂] Base64 解析失敗 (Task: {task_id}): {decode_err}")
         return None, None
 
 def downscale_for_ocr(img):
@@ -212,7 +199,7 @@ def shrink_display_image(b64: str):
         buf = np.frombuffer(base64.b64decode(b64), dtype=np.uint8)
         img = cv2.imdecode(buf, cv2.IMREAD_COLOR)
         if img is None:
-            print("⚠️ 代表圖解不開，改成不附展示圖。")
+            print("[警告] 代表圖解不開，改成不附展示圖。")
             return None
         height, width = img.shape[:2]
         longest = max(height, width)
@@ -222,13 +209,13 @@ def shrink_display_image(b64: str):
                              interpolation=cv2.INTER_AREA)
         ok, encoded = cv2.imencode(".jpg", img, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
         if not ok:
-            print("⚠️ 代表圖重編碼失敗，改成不附展示圖。")
+            print("[警告] 代表圖重編碼失敗，改成不附展示圖。")
             return None
         out = base64.b64encode(encoded.tobytes()).decode("ascii")
-        print(f"🖼️ 代表圖太大，已縮小：{len(b64)} → {len(out)} 字元")
+        print(f"代表圖太大，已縮小：{len(b64)} → {len(out)} 字元")
         return out
     except Exception as e:
-        print(f"⚠️ 代表圖縮圖時出錯（{e}），改成不附展示圖。")
+        print(f"[警告] 代表圖縮圖時出錯（{e}），改成不附展示圖。")
         return None
 
 
@@ -238,14 +225,14 @@ def evict_stale_batches():
     stale = [bid for bid, data in BATCH_MEMORY.items()
              if now - data.get("last_touch", now) > BATCH_TTL_SECONDS]
     for bid in stale:
-        print(f"🧹 [過期清理] 批次 {bid} 超過 {BATCH_TTL_SECONDS // 60} 分鐘沒有新圖，"
+        print(f"[過期清理] 批次 {bid} 超過 {BATCH_TTL_SECONDS // 60} 分鐘沒有新圖，"
               f"已處理 {BATCH_MEMORY[bid]['processed_count']} 張，判定收不齊，釋放。")
         del BATCH_MEMORY[bid]
 
 
 # 5. 核心非同步工廠：偷偷在背景算 YOLO，全部圖片到齊後才打電話給後端
 def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_images: int):
-    print(f"\n[🔥 影像分析啟動] 正在處理任務: {task_id}")
+    print(f"\n[影像分析啟動] 正在處理任務: {task_id}")
 
     batch_id = task_id.split("_")[0] if "_" in task_id else task_id
 
@@ -280,9 +267,9 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                     cls_id = int(box.cls)  # 模型吐出的原始數字 ID，僅用來查回類別名稱
 
                     actual_name = r.names.get(cls_id, "未知")
-                    print(f"🔍 YOLO 原始偵測 -> ID: {cls_id}, 信心度: {conf:.2f}, 原始標籤: {actual_name}")
+                    print(f"YOLO 原始偵測 -> ID: {cls_id}, 信心度: {conf:.2f}, 原始標籤: {actual_name}")
 
-                    # 🌟 用「類別名稱」比對 16 類權重表，而非數字 ID，避免模型重訓後 ID 洗牌導致誤判
+                    # 用「類別名稱」比對 16 類權重表，而非數字 ID，避免模型重訓後 ID 洗牌導致誤判
                     record_detection(current_class_metadata, actual_name, conf)
 
                     # 正規化座標 (0~1)，不管前端把圖片縮放到多大都能直接換算畫框位置
@@ -324,7 +311,7 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
         batch_ocr_texts = []
 
         # -----------------------------------------------------------------
-        # 🌟 核心記憶體統整算式：使用 Lock 確保多執行緒累加安全
+        # 核心記憶體統整算式：使用 Lock 確保多執行緒累加安全
         # -----------------------------------------------------------------
         with memory_lock:
             if batch_id not in BATCH_MEMORY:
@@ -344,7 +331,7 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
             BATCH_MEMORY[batch_id]["processed_count"] += 1
             BATCH_MEMORY[batch_id]["last_touch"] = time.time()
 
-            # 🌟 解耦設計：count / max_confidence 獨立於單張分數之外，逐圖合併成整批的 metadata
+            # 解耦設計：count / max_confidence 獨立於單張分數之外，逐圖合併成整批的 metadata
             if is_valid:
                 BATCH_MEMORY[batch_id]["valid_image_count"] += 1
                 merge_class_metadata(BATCH_MEMORY[batch_id]["class_metadata"], current_class_metadata)
@@ -361,9 +348,9 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                 BATCH_MEMORY[batch_id]["best_display_image_detections"] = visible_detections
 
             current_progress = BATCH_MEMORY[batch_id]["processed_count"]
-            print(f"📊 批次進度追蹤 [{batch_id}]: {current_progress} / {total_images} (當前任務: {task_id})")
+            print(f"批次進度追蹤 [{batch_id}]: {current_progress} / {total_images} (當前任務: {task_id})")
 
-            # 🌟 檢查：是否所有圖片都到齊了？
+            # 檢查：是否所有圖片都到齊了？
             if current_progress >= total_images:
                 should_report = True
 
@@ -373,7 +360,7 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                 representative_image_detections = BATCH_MEMORY[batch_id]["best_display_image_detections"]
                 batch_ocr_texts = BATCH_MEMORY[batch_id]["ocr_texts"]
 
-                # 🌟 批次分數：把整批圖片合併成「一份」類別證據（每個類別取全批最高信心度），
+                # 批次分數：把整批圖片合併成「一份」類別證據（每個類別取全批最高信心度），
                 # 直接套用跟單張圖一樣的存在即採計＋組合加成公式，不再對每張圖的分數取平均。
                 # 平均會讓真正的強證據（例如 15 張圖裡有幾張很清楚的大麻符號）被其餘普通照片稀釋掉，
                 # 導致整批評分被拉低、跟實際風險不成比例；改成這樣之後只要批次裡出現過一次高信心度證據，
@@ -407,7 +394,7 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                 },
             }
 
-            print(f"\n[🚀 批次全數到齊！] 正在發送最終結算報告給後端。批次: {batch_id}")
+            print(f"\n[批次全數到齊！] 正在發送最終結算報告給後端。批次: {batch_id}")
             print(f"   -> 有效圖筆數: {valid_image_count} / {total_images}, 總類別: {detected_objects}")
             print(f"   -> 批次整體分數 (全批合併證據計算): {final_risk_score} 分 (最高風險類別: {batch_visual_result['top_class']}, 組合加成: {batch_visual_result['combo_multiplier']}x)")
 
@@ -417,25 +404,25 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                 headers={"X-Internal-Token": INTERNAL_API_TOKEN},
                 timeout=5,
             )
-            print(f"[✨ 後端回應] 狀態碼: {response.status_code}, 內容: {response.text}")
+            print(f"[後端回應] 狀態碼: {response.status_code}, 內容: {response.text}")
             
             # 釋放記憶體
             with memory_lock:
                 if batch_id in BATCH_MEMORY:
                     del BATCH_MEMORY[batch_id]
-                    print(f"🧹 [記憶體清理] 已成功釋放批次 {batch_id} 的緩存空間。")
+                    print(f"[記憶體清理] 已成功釋放批次 {batch_id} 的緩存空間。")
         else:
             print(f"⏳ 任務 {task_id} 處理完畢，目前累計 {current_progress} 張圖，等待其餘圖片到齊中...")
             
     except Exception as e:
-        print(f"❌ 背景處理或回報失敗: {str(e)}")
+        print(f"[錯誤] 背景處理或回報失敗: {str(e)}")
 
 # 7. 健康檢查：讓 docker-compose 之類的編排工具知道這個模組是不是真的活了（模型有沒有載完）
 @app.get("/health")
 async def health(response: Response):
     """模型沒載入就回 503。
 
-    ⚠️ 一定要 async。同步的 def 會被 FastAPI 丟進執行緒池，而那個池子
+    一定要 async。同步的 def 會被 FastAPI 丟進執行緒池，而那個池子
     （預設 40 條）正是 background_yolo_and_report 在用的——推論忙的時候
     /health 會排在幾十個推論後面，8 秒都回不來，健康檢查因此把一個
     「只是忙」的服務判成「壞掉」。async 直接在事件迴圈上跑，這裡只是讀兩個
@@ -470,7 +457,7 @@ async def receive_from_backend(data: dict, background_tasks: BackgroundTasks):
     image_base64 = data.get("image_base64", None)
     priority = data.get("priority", 0)
     
-    # 🌟 讀取後端加在最後一條位子的 total_images
+    # 讀取後端加在最後一條位子的 total_images
     total_images = data.get("total_images", 11)
     
     background_tasks.add_task(background_yolo_and_report, url, image_base64, task_id, total_images)

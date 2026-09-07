@@ -16,7 +16,7 @@ uvicorn==0.47.0
 # 這個檔案改一行就要重抓四個小時。分開裝，那一層才不會被牽連。
 
 # easyocr: OCR 引擎（繁中+英文）。main.py 是透過 ai_model/ocr.py 間接用到，這裡要手動列。
-# ⚠️ 已知衝突：easyocr 會自己拉 opencv-python-headless 進來，跟上面釘的 opencv-python 搶同一個
+# 已知衝突：easyocr 會自己拉 opencv-python-headless 進來，跟上面釘的 opencv-python 搶同一個
 # cv2 命名空間，誰後裝誰的檔案就會蓋過去——實測過 headless 版本會蓋掉我們釘的 4.13.0.92，
 # 且版本還不一樣（曾經蓋成 5.0.0），行為不保證跟我們測過的一致。
 # Dockerfile 裡因此在裝完 requirements.txt 之後，額外強制重裝一次 opencv-python==4.13.0.92，

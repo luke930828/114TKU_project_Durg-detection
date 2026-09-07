@@ -9,7 +9,7 @@
 # 改由下面三個 stub 用網路別名頂替。mysql / backend / frontend 全部是真的，
 # 驗到的是真的跨容器 HTTP、真的 MySQL、真的 nginx proxy。
 #
-# ⚠️ 相對路徑是以第一個 -f 檔案的目錄（deploy/）為基準，所以是 ../tests/stubs
+# 相對路徑是以第一個 -f 檔案的目錄（deploy/）為基準，所以是 ../tests/stubs
 # ============================================================
 
 services:
@@ -26,7 +26,7 @@ services:
       DB_NAME: ${TEST_DB_NAME:-drug_prevention_test}
       # 初始管理員密碼。不設的話 main.py 會隨機產生一組並印在 log，
       # 測試就登不進去了，所以測試環境固定成一個已知值。
-      # ⚠️ 這個值只給測試用，正式環境要另外設一組。
+      # 這個值只給測試用，正式環境要另外設一組。
       ADMIN_INITIAL_PASSWORD: ${TEST_ADMIN_PASSWORD:-IntegrationTest!2026}
 
   nlp-stub:

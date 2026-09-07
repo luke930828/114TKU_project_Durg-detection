@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-⚠️ 已被 tests/ 取代，保留是為了 make smoke 與 make up-staged 還在用。
+已被 tests/ 取代，保留是為了 make smoke 與 make up-staged 還在用。
 
     新的整合測試：make test          （tests/integration/test_03_pipeline.py 涵蓋這裡全部內容再加上更多）
     資安測試：    make test-security
@@ -28,8 +28,8 @@ import uuid
 
 import requests
 
-PASS = "\033[32m✔\033[0m"
-FAIL = "\033[31m✘\033[0m"
+PASS = "\033[32mPASS\033[0m"
+FAIL = "\033[31mFAIL\033[0m"
 
 failures = []
 

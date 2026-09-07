@@ -26,13 +26,9 @@ interface RepresentativeDetection {
   normalized: boolean;
 }
 
-// OCR 不在前端顯示。
-//
-// 圖片裡的文字改成直接送給 NLP 當額外的文字證據（backend/app/utils.py 的
-// analyze_ocr_text_with_nlp），影響的是風險分數本身，不是多一個給人看的區塊。
-// 承辦人員要看的是「這一頁幾分、為什麼」，不是一堆 'netwt'、'403' 這種
-// 從包裝上讀到的碎片——那些對判讀沒有幫助，只會把畫面塞滿。
-// 原始的 OCR 結果仍然存在 ai_analysis_results.ocr_results，要追查時查得到。
+// OCR 不在前端顯示：圖片裡的文字直接送給 NLP 當額外的文字證據，影響的是風險
+// 分數本身，不是多一個給人看的區塊。承辦人員要看的是「這一頁幾分、為什麼」，
+// 不是一堆從包裝上讀到的碎片。原始結果仍存在 ai_analysis_results.ocr_results。
 
 const clampCoordinate = (value: number) => Math.min(1, Math.max(0, value));
 
@@ -186,7 +182,7 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
     setAnalysisData(null);
     setServerMessage("使用者已停止本次網址分析。");
 
-    console.log("🛑 使用者已停止網址分析。");
+    console.log("使用者已停止網址分析。");
   };
 
   // 元件離開時清理請求與輪詢
@@ -229,7 +225,7 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
       }
 
       console.log(
-        `🔄 系統背景自動輪詢中（第 ${pollAttemptRef.current}/${POLL_MAX_ATTEMPTS} 次），檢查 YOLO 與 NLP 是否完成...`
+        `系統背景自動輪詢中（第 ${pollAttemptRef.current}/${POLL_MAX_ATTEMPTS} 次），檢查 YOLO 與 NLP 是否完成...`
       );
 
       const controller = new AbortController();

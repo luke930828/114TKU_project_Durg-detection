@@ -16,15 +16,9 @@ def receive_ai_analysis_result(
     db: Session = Depends(get_db),
     _internal: bool = Depends(verify_internal_token),
 ):
-    # 一定要截斷：yolo_details / nlp_details 都是 varchar(500)，
-    # 串接後超長的話 MySQL 會丟 DataError，整個請求 500 而且分析結果不會寫進去。
-    # schema 已經擋掉離譜的輸入，這裡是第二層——欄位長度是資料庫的事實，
-    # 不該依賴呼叫端剛好沒送太長。
-    # 三種情況要寫成三種不同的字，不能混為一談：
-    #   有檢出        → 類別清單
-    #   有圖但沒檢出   → 「無檢出影像特徵」
-    #   根本沒有圖     → 「無影像可分析」
-    # 最後一種以前是留著「影像分析中...」不動，結果前端永遠等不到結束（見 utils.py）。
+    # 一定要截斷：yolo_details / nlp_details 是 varchar(500)，超長會讓整個請求 500。
+    # 三種情況要寫成三種不同的字：有檢出 → 類別清單；有圖但沒檢出 → 「無檢出影像特徵」；
+    # 根本沒有圖 → 「無影像可分析」。最後一種若留著「影像分析中...」，前端會永遠等不到結束。
     if report.yolo_objects:
         yolo_str = ", ".join(report.yolo_objects)[:500]
     elif report.no_images:
@@ -37,14 +31,10 @@ def receive_ai_analysis_result(
     # 這裡轉成 dict 一次，下面三個寫入點共用。
     ocr_payload = report.ocr_results.model_dump() if report.ocr_results else None
 
-    # 圖片裡的文字跟網頁文字合併，再送 NLP 判一次。
+    # 圖片裡的文字要跟網頁文字合併再送 NLP：只送 OCR 的話，模型拿到的是一袋
+    # 沒有上下文的碎片，會亂判。合併後長度上限改用 512，詳見 utils.py。
     #
-    # 不能只送 OCR：模型拿到一袋沒有上下文的碎片會亂判（實測微波爐商品頁被判
-    # 100 分，關鍵字是 'IRE'、'STAPT'）。也不能就這樣接在後面用預設的 256 截斷
-    # ——OCR 會被切掉。合併之後改用 512，詳見 utils.py 的說明。
-    #
-    # 排在背景做：這支端點是 YOLO 在等回應的，多一次 NLP 推論會讓它多等好幾秒，
-    # 而 YOLO 那邊的 timeout 只有 5 秒。下面三條分支都會走到，所以放在分支之前。
+    # 排在背景做——這支端點是 YOLO 在等回應的，而它的 timeout 只有 5 秒。
     if ocr_payload:
         background_tasks.add_task(rescore_with_ocr_text, report.url, ocr_payload)
     existing_record = db.query(database.AIAnalysisResult).filter(database.AIAnalysisResult.url == report.url).first()
