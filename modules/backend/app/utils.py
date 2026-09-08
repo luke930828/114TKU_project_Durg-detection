@@ -40,7 +40,17 @@ def calculate_multimodal_risk_100_scale(nlp_raw_score: int, yolo_raw_score: int)
     綜合分數仍以加權算出並保留，因為前端與報表要拿它排序；
     但風險等級不再由它決定。
     """
-    combined = int(0.6 * nlp_raw_score + 0.4 * yolo_raw_score)
+    # 排序分數＝文字分數本身，不再是加權平均。
+    #
+    # 加權平均實測比單用文字差很多（ROC-AUC 0.861 vs 0.938，完整網頁文字）：
+    # 影像分數單獨的 ROC-AUC 只有 0.38~0.53，混進去等於在好訊號裡摻雜訊，
+    # 而且權重給得越高排序越差。
+    #
+    # 影像仍然有用，但用在「同一級之內誰先看」——那是 ORDER BY 的次要鍵
+    # （見 crawler.py），跟「把兩個分數相加」是完全不同的操作。
+    # 這也讓排序與判定終於用同一套邏輯：判定早就是「文字決定要不要看、
+    # 影像決定先看誰」，只有排序還停在加權平均。
+    combined = int(nlp_raw_score)
 
     if nlp_raw_score >= NLP_HIGH and yolo_raw_score >= YOLO_CONFIRM:
         risk_level = "極高風險"                      # 兩個引擎都指向毒品

@@ -579,6 +579,7 @@ def get_automated_24h_results(
         order = [
             _severity_expr(),
             database.AIAnalysisResult.risk_score.desc(),
+            database.AIAnalysisResult.yolo_score.desc(),   # 同分才看影像，理由同下
             database.AIAnalysisResult.created_at.desc(),
         ]
     elif bucket == "pending":
@@ -588,6 +589,9 @@ def get_automated_24h_results(
             case((database.AIAnalysisResult.risk_level == "高風險 (優先人工覆核)", 0),
                  else_=1),
             database.AIAnalysisResult.risk_score.desc(),
+            # 文字分數相同時才看影像。影像單獨的判別力接近隨機，
+            # 只適合當同分時的次要鍵，不能加權混進主要排序。
+            database.AIAnalysisResult.yolo_score.desc(),
             database.AIAnalysisResult.created_at.desc(),
         ]
     else:
