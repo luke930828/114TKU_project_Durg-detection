@@ -162,12 +162,21 @@ services:
       core: 0
     environment:
       TZ: Asia/Taipei
-      MODEL_ID: ${MODEL_ID:-matt0513/drug-detection-xlm-roberta}
+      # v3 起改用續訓版：加入承辦人員回報的困難負樣本，
+      # 完整網頁文字上的 ROC-AUC 0.8889 → 0.9383、precision 0.743 → 0.893。
+      # 要回滾就把這裡改回 matt0513/drug-detection-xlm-roberta，
+      # 但門檻要一起改回去（utils.py 的 NLP_MEDIUM）——兩者是綁在一起的。
+      MODEL_ID: ${MODEL_ID:-matt0513/drug-detection-xlm-roberta-v3}
       BACKEND_BASE_URL: http://backend:8000
       INTERNAL_API_TOKEN: ${INTERNAL_API_TOKEN}
     volumes:
       # 模型從 Hugging Face Hub 下載，快取掛 volume 避免每次重啟都重抓
       - hf-cache:/root/.cache/huggingface
+      # 本機訓練的模型。MODEL_ID 指向 /models/nlp/<版本> 就會改用本機的，
+      # 留空則沿用 Hugging Face Hub 上的版本。
+      # 注意：這個目錄不在 git 裡（1.1 GB／版），組員要用得另外取得，
+      # 或把模型推上 Hub 之後改回用 Hub 的 ID。
+      - ${NLP_MODEL_DIR:-../results/nlp_v2_experiments}:/models/nlp:ro
     depends_on:
       backend:
         condition: service_healthy
