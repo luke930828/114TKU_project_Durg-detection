@@ -128,6 +128,15 @@ class AIAnalysisResult(Base):
     # 舊欄位保留讓遷移期間新舊資料並存，搬完會被清空。
     representative_image_base64 = Column(LONGTEXT, nullable=True)
     representative_image_path = Column(String(128), nullable=True)
+
+    # 人工覆核的結論，跟模型判定分開存。
+    #
+    # 以前人工確認是直接把 risk_level 改成「極高風險」，跟模型自己判的同一個值——
+    # 結果下一次 AI 回報進來就重算 risk_level，把人的結論蓋掉。
+    # 實際發生過：三筆 09-05 確認的紀錄，被後續的影像補跑重算回「高風險」。
+    human_verified = Column(Boolean, default=False)
+    human_verified_at = Column(DateTime, nullable=True)
+    human_verified_by = Column(String(50), nullable=True)
     representative_image_detections = Column(JSON, nullable=True)
     # OCR 是由影像分析引擎回傳的結構化結果；保留 JSON，避免把每個辨識框拆成
     # 多張資料表後破壞既有 API 的回傳格式。
@@ -148,6 +157,9 @@ _PENDING_COLUMNS = [
     ("whitelist_websites", "source", "VARCHAR(20) DEFAULT '一般新增'"),
     # 代表圖搬到檔案系統之後，這裡存的是相對路徑而不是內容。
     ("ai_analysis_results", "representative_image_path", "VARCHAR(128) NULL"),
+    ("ai_analysis_results", "human_verified", "BOOLEAN DEFAULT FALSE"),
+    ("ai_analysis_results", "human_verified_at", "DATETIME(6) NULL"),
+    ("ai_analysis_results", "human_verified_by", "VARCHAR(50) NULL"),
 ]
 
 

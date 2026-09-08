@@ -70,9 +70,13 @@ def receive_ai_analysis_result(
         
         current_nlp_score = existing_record.nlp_score or 0
         final_score, level = calculate_multimodal_risk_100_scale(current_nlp_score, existing_record.yolo_score)
-        
+
         existing_record.risk_score = final_score
-        existing_record.risk_level = level
+        # 人工確認過的不覆蓋等級。分數照更新（那是模型的最新看法），
+        # 但「這是毒品網站」是人下的結論，不該被下一次自動分析改掉。
+        # 實際發生過：三筆人工確認的紀錄被後續的影像補跑重算回「高風險」。
+        if not existing_record.human_verified:
+            existing_record.risk_level = level
         db.commit()
         return {"status": "success", "message": f"成功統整！已將 YOLO 影像與分數補算至 {report.url}"}
     else:
@@ -108,7 +112,9 @@ def receive_ai_analysis_result(
                 current_nlp_score = real_existing.nlp_score or 0
                 final_score, level = calculate_multimodal_risk_100_scale(current_nlp_score, real_existing.yolo_score)
                 real_existing.risk_score = final_score
-                real_existing.risk_level = level
+                # 人工確認過的不覆蓋等級，理由同上。
+                if not real_existing.human_verified:
+                    real_existing.risk_level = level
                 db.commit()
             return {"status": "success", "message": "遭遇併發衝突，已轉為更新模式寫入！"}
 # 模組八：NLP 獨立分析結果接收通道
@@ -133,7 +139,9 @@ def receive_nlp_analysis_result(
         final_score, level = calculate_multimodal_risk_100_scale(report.risk_score, current_yolo_score)
         
         existing_record.risk_score = final_score
-        existing_record.risk_level = level
+        # 人工確認過的不覆蓋等級，理由同上。
+        if not existing_record.human_verified:
+            existing_record.risk_level = level
         db.commit()
         return {"status": "success", "message": f"成功統整！已將 NLP 文字與分數補充至 {report.url}"}
     else:
@@ -159,6 +167,8 @@ def receive_nlp_analysis_result(
                 final_score, level = calculate_multimodal_risk_100_scale(report.risk_score, current_yolo_score)
                 
                 real_existing.risk_score = final_score
-                real_existing.risk_level = level
+                # 人工確認過的不覆蓋等級，理由同上。
+                if not real_existing.human_verified:
+                    real_existing.risk_level = level
                 db.commit()
             return {"status": "success", "message": "遭遇併發衝突，已成功將 NLP 轉為更新模式寫入！"}
