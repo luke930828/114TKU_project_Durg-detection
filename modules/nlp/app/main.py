@@ -237,7 +237,16 @@ async def predict(req: PredictRequest):
     pred_idx = torch.argmax(outputs.logits, dim=-1).item()
 
     label = "DRUG" if pred_idx == 1 else "SAFE"
-    drug_score = round(float(probs[1]), 4) if pred_idx == 1 else 0.0
+    # 一律回傳「是毒品的機率」，不要因為 argmax 判成 SAFE 就歸零。
+    #
+    # 舊寫法是 `probs[1] if pred_idx == 1 else 0.0`，等於把 0.49 和 0.001
+    # 都壓成 0——服務永遠不可能回傳 0~50 之間的值，呼叫端的門檻在那個區間
+    # 完全失效。實測 48 筆裡有 22 筆被歸零，其中 4 個是真的毒品網站，
+    # 門檻設多低都救不回來。
+    #
+    # label 仍照 argmax 給，供只要二元結果的呼叫端使用；
+    # 要分級的呼叫端請用 score 自己套門檻。
+    drug_score = round(float(probs[1]), 4)
 
     # 2. 提取關鍵字（機率 > 0.3 才值得標）
     keywords = extract_keywords(text, max_length=max_length) if drug_score > 0.3 else []
