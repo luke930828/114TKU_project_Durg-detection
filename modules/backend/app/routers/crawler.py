@@ -4,6 +4,7 @@ from sqlalchemy import case, func, or_
 from sqlalchemy.orm import Session
 from typing import Optional
 import json
+from datetime import datetime
 import database
 import image_store
 from schemas import WebsiteReport, ConfirmBatch
@@ -303,6 +304,9 @@ def confirm_result(result_id: int, db: Session = Depends(get_db),
 
     before = row.risk_level
     row.risk_level = "極高風險"
+    row.human_verified = True
+    row.human_verified_at = datetime.now()
+    row.human_verified_by = current_admin.user_id
     db.commit()
 
     log_audit_action(
@@ -348,6 +352,9 @@ def confirm_results_batch(
             skipped.append(row.id)
             continue
         row.risk_level = "極高風險"
+        row.human_verified = True
+        row.human_verified_at = datetime.now()
+        row.human_verified_by = current_admin.user_id
         confirmed.append(row.url)
     db.commit()
 
