@@ -1,6 +1,7 @@
 from dependencies import get_db, get_current_user
 from fastapi import APIRouter, Depends, HTTPException, BackgroundTasks, Query
 from sqlalchemy import case, func, or_
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 from typing import Optional
 import json
@@ -128,17 +129,34 @@ def receive_crawler_raw_data(
                 html_content=report.text_content or "",
                 images_data="[]",          # 已確認的站不必再留圖佔空間
             )
+            def _apply_blacklist(row):
+                row.risk_score = 100
+                row.risk_level = "極高風險"
+                row.nlp_details = f"人工黑名單：{black.reason or black.title or '已確認'}"[:500]
+                row.yolo_details = "人工黑名單，未經影像分析"
+                row.task_source = f"[{report.task_type}] 爬蟲自動通報"
+
             ai_row = db.query(database.AIAnalysisResult).filter(
                 database.AIAnalysisResult.url == report.url).first()
-            if not ai_row:
-                ai_row = database.AIAnalysisResult(url=report.url)
-                db.add(ai_row)
-            ai_row.risk_score = 100
-            ai_row.risk_level = "極高風險"
-            ai_row.nlp_details = f"人工黑名單：{black.reason or black.title or '已確認'}"[:500]
-            ai_row.yolo_details = "人工黑名單，未經影像分析"
-            ai_row.task_source = f"[{report.task_type}] 爬蟲自動通報"
-            db.commit()
+            if ai_row:
+                _apply_blacklist(ai_row)
+                db.commit()
+            else:
+                # 「查不到就新增」在併發下會有兩個請求同時走到這裡。
+                # url 上有唯一索引，後到的那個會拿到 IntegrityError，
+                # 這時改成更新對方剛建好的那一列，而不是留下第二列。
+                try:
+                    ai_row = database.AIAnalysisResult(url=report.url)
+                    _apply_blacklist(ai_row)
+                    db.add(ai_row)
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+                    ai_row = db.query(database.AIAnalysisResult).filter(
+                        database.AIAnalysisResult.url == report.url).first()
+                    if ai_row:
+                        _apply_blacklist(ai_row)
+                        db.commit()
             return {"status": "blacklisted",
                     "message": f"網址 {report.url} 命中人工黑名單（{black.title}），已直接歸檔為極高風險。"}
 
@@ -168,8 +186,15 @@ def receive_crawler_raw_data(
                     task_source=f"[{report.task_type}] 爬蟲自動通報"
                 )
                 db.add(new_ai_record)
-            
-            db.commit()
+                # 同上：併發時後到的請求會撞到 url 的唯一索引。
+                # 這一筆是「攔截歸檔為 0 分」，對方那一列已經存在就不必再蓋，
+                # 直接放掉即可——重複建檔才是要避免的事。
+                try:
+                    db.commit()
+                except IntegrityError:
+                    db.rollback()
+            else:
+                db.commit()
             return {"status": "success", "message": "已成功攔截無效網站，跳過 AI 派發並直接歸檔為 0 分。"}
 
         extracted_images = []

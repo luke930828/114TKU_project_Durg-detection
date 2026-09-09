@@ -112,7 +112,15 @@ class AIAnalysisResult(Base):
     __tablename__ = "ai_analysis_results"
 
     id = Column(Integer, primary_key=True, index=True)
-    url = Column(String(768), index=True, nullable=False)
+    # unique：一個網址只該有一筆分析結果。
+    # 沒有這個約束時，兩個併發請求會各自「查不到 → 新增」，產生兩列同網址的紀錄；
+    # 之後所有 filter(url == ...).first() 都只會拿到較早的那一列，
+    # 另一列永遠沒人更新，就一直卡在「影像分析中...」而且不會有人發現。
+    # 實際發生過 5 次（都在 2 秒內）。
+    #
+    # 768 是 InnoDB 在 utf8mb4 下單一索引鍵的上限（768 × 4 = 3072 bytes），
+    # 再長就建不出唯一索引。
+    url = Column(String(768), unique=True, index=True, nullable=False)
     
     yolo_details = Column(String(500))  
     yolo_score = Column(Integer, default=0)
@@ -175,6 +183,13 @@ _PENDING_COLUMN_TYPES = [
 ]
 
 
+# 既有資料表要補「唯一索引」時登記在這裡。
+# (表名, 欄位名, 索引名)
+_PENDING_UNIQUE_INDEXES = [
+    ("ai_analysis_results", "url", "uq_ai_analysis_results_url"),
+]
+
+
 def initialize_database():
     """建立新表並以非破壞方式補齊既有資料庫缺少的欄位與型別。
 
@@ -210,6 +225,28 @@ def initialize_database():
             connection.execute(
                 text(f"ALTER TABLE {table} MODIFY COLUMN {column} {ddl}"))
         print(f"已把 {table}.{column} 從 {current} 改成 {ddl}")
+
+    for table, column, index_name in _PENDING_UNIQUE_INDEXES:
+        if table not in inspector.get_table_names():
+            continue
+        # 已經有任何一個唯一索引蓋住這個欄位就不用再建
+        if any(ix.get("unique") and ix.get("column_names") == [column]
+               for ix in inspector.get_indexes(table)):
+            continue
+        with engine.begin() as connection:
+            dup = connection.execute(text(
+                f"SELECT COUNT(*) FROM (SELECT {column} FROM {table} "
+                f"GROUP BY {column} HAVING COUNT(*) > 1) t"
+            )).scalar()
+            if dup:
+                # 有重複就不要硬建——建不起來，而且把啟動流程弄爆比留著索引沒建更糟。
+                # 印出來讓人先去清乾淨，清完重啟就會自動補上。
+                print(f"{table}.{column} 有 {dup} 組重複值，唯一索引先不建。"
+                      f"請先清掉重複的資料再重啟。")
+                continue
+            connection.execute(text(
+                f"CREATE UNIQUE INDEX {index_name} ON {table} ({column})"))
+        print(f"已為 {table}.{column} 建立唯一索引 {index_name}")
 
 
 #  7. 執行建立資料表的指令 
