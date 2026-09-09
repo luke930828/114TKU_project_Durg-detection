@@ -40,12 +40,20 @@ interface RepresentativeDetection {
 
 interface ResultType {
   id: string | number;
+  yoloScore: number;
+  // 「人確認過這是毒品站」跟「模型判幾級」是兩件事。
+  // 等級只由規則決定，確認與否要另外顯示，不然畫面上看不出差別。
+  humanVerified: boolean;
+  verifiedAt: string | null;
   time: string;
   websiteUrl: string;
   content: string;
   drugType: string;
   language: string;
-  riskLevel: "critical" | "high" | "medium" | "low";
+  // verified 不是「更嚴重的一級」，而是另一個維度：人已經確認過。
+  // 放進同一個聯集是因為清單上這一格只顯示一個標籤，
+  // 而「已經有人確定它是毒品網站」永遠比模型判幾級更該讓人看到。
+  riskLevel: "verified" | "critical" | "high" | "medium" | "low";
   score: number;
   caseNumber: string;
   nlpKeywords: string[];
@@ -60,7 +68,13 @@ interface DomainRow {
   domain: string;
   pageCount: number;
   score: number;
+  yoloScore: number;
   riskLevel: ResultType["riskLevel"];
+  // 這個網域底下有幾頁被人確認過
+  verifiedCount: number;
+  // 模型自己怎麼看（不含人工確認的影響）。已確認的網域主標籤會蓋掉等級，
+  // 這個欄位讓模型的判定仍然看得到，不然畫面上只剩人的結論。
+  modelRiskLevel: ResultType["riskLevel"];
   date: string;
 }
 
@@ -70,6 +84,25 @@ interface CrawlerStats {
   medium: number;
   low: number;
 }
+
+// 文字與影像分數分開顯示，不合成單一分數。
+//
+// 風險等級是二維判斷：文字要過門檻，影像有沒有附和決定是「極高」還是「高」。
+// 只顯示一個分數的話，畫面上會出現「文字 100 分卻是高風險」排在
+// 「文字 95 分的極高風險」後面，看起來自相矛盾（實際有 607 筆這種情況）。
+//
+// 合成一個分數的做法實測過：加權平均與邏輯迴歸學出來的權重，
+// 排序都比純文字差（ROC-AUC 0.847~0.888 vs 0.900），而且會破壞分數的校準性質。
+function ScorePair({ text, image }: { text: number; image: number }) {
+  return (
+    <span className="font-mono text-sm text-gray-500 whitespace-nowrap">
+      文字 <span className="font-bold text-gray-700">{text}</span>
+      <span className="mx-1.5 text-gray-300">·</span>
+      影像 <span className="font-bold text-gray-700">{image}</span>
+    </span>
+  );
+}
+
 
 const EMPTY_STATS: CrawlerStats = {
   total: 0,
@@ -99,6 +132,10 @@ const normalizeKeywords = (value: unknown): string[] => {
 // 後端怎麼改都沒有作用，2026-08-30 把加權平均改成門檻判定時就是這樣被吃掉的。
 const normalizeRiskLevel = (level: string): ResultType["riskLevel"] => {
   const l = (level ?? "").trim();
+  // 後端網域列會把「這個網域底下有人確認過」回成「已人工確認」。
+  // 沒有這一行的話會掉進最後的 return "low"，畫面上顯示成綠色低風險——
+  // 已經確定是毒品網站的網域標成低風險，那是最糟的一種錯。
+  if (l.startsWith("已人工確認") || l.startsWith("覆核")) return "verified";
   if (l.startsWith("極高風險")) return "critical";
   if (l.startsWith("高風險")) return "high";
   if (l.startsWith("中風險")) return "medium";
@@ -129,6 +166,7 @@ const normalizeResult = (value: unknown, index: number): ResultType | null => {
   if (!isRecord(value)) return null;
 
   const score = Number(value.score ?? value.risk_score ?? 0);
+  const yoloScore = Number(value.yolo_score ?? 0);
   const websiteUrl = getString(
     value.websiteUrl ?? value.website_url ?? value.target_url ?? value.url ??
       value.domain_name
@@ -152,6 +190,11 @@ const normalizeResult = (value: unknown, index: number): ResultType | null => {
     language: getString(value.language, "未知"),
     riskLevel: normalizeRiskLevel(getString(value.risk_level, "")),
     score: Number.isFinite(score) ? score : 0,
+    yoloScore: Number.isFinite(yoloScore) ? yoloScore : 0,
+    humanVerified: value.human_verified === true,
+    verifiedAt: typeof value.human_verified_at === "string"
+      ? value.human_verified_at
+      : null,
     caseNumber: getString(
       value.caseNumber ?? value.case_number,
       String(value.id ?? "未建立")
@@ -179,11 +222,15 @@ const normalizeDomainRow = (value: unknown): DomainRow | null => {
   const domain = getString(value.domain);
   if (!domain) return null;
   const score = Number(value.risk_score ?? 0);
+  const yoloScore = Number(value.yolo_score ?? 0);
   return {
     domain,
     pageCount: Number(value.page_count ?? 0),
     score: Number.isFinite(score) ? score : 0,
+    yoloScore: Number.isFinite(yoloScore) ? yoloScore : 0,
     riskLevel: normalizeRiskLevel(getString(value.risk_level, "")),
+    verifiedCount: Number(value.verified_count ?? 0),
+    modelRiskLevel: normalizeRiskLevel(getString(value.model_risk_level, "")),
     date: getString(value.discovered_date, "時間未提供"),
   };
 };
@@ -373,10 +420,15 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
     setCurrentPage(page);
   };
 
+  // 「覆核過」不是等級，是另一個維度，所以單獨判斷：
+  // 網域列只要底下有任何一頁被確認過就算。用 riskLevel === "verified"
+  // 也可以，但那依賴後端剛好把 worst 算成 -1，條件藏得太深。
   const filtered =
     filterRisk === "all"
       ? data
-      : data.filter((item) => item.riskLevel === filterRisk);
+      : filterRisk === "verified"
+        ? data.filter((item) => item.verifiedCount > 0)
+        : data.filter((item) => item.riskLevel === filterRisk);
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-[#2B4C7E] to-[#1a2f4f] p-6">
@@ -435,6 +487,7 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
               className="border-2 border-gray-200 rounded-lg p-2 focus:border-[#2B4C7E]"
             >
               <option value="all">全部</option>
+              <option value="verified">覆核確定為毒品網站</option>
               <option value="critical">極高風險</option>
               <option value="high">高風險 (優先覆核)</option>
               <option value="medium">中風險 (建議覆核)</option>
@@ -490,16 +543,23 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
                           </p>
                         </div>
                       </div>
-                      <div className="mt-4 flex items-center gap-3">
+                      <div className="mt-4 flex flex-wrap items-center gap-x-3 gap-y-2">
+                        <span className={`shrink-0 font-bold ${getRiskScoreColor(item.riskLevel)}`}>
+                          {getRiskText(item.riskLevel)}
+                        </span>
+                        {item.verifiedCount > 0 && (
+                          <span className="shrink-0 text-xs text-gray-400">
+                            {item.verifiedCount} 頁已確認　模型判定：
+                            {getRiskText(item.modelRiskLevel)}
+                          </span>
+                        )}
                         <div className="min-w-0 flex-1 bg-gray-200 h-2 rounded-full overflow-hidden">
                           <div
                             className={`${getRiskProgressColor(item.riskLevel)} h-2 rounded-full`}
                             style={{ width: `${Math.min(100, Math.max(0, item.score))}%` }}
                           />
                         </div>
-                        <span className={`w-14 shrink-0 text-right text-lg font-bold ${getRiskScoreColor(item.riskLevel)}`}>
-                          {item.score}%
-                        </span>
+                        <ScorePair text={item.score} image={item.yoloScore} />
                       </div>
                     </button>
 
@@ -529,8 +589,27 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
                                       {child.time}　案件編號：{child.caseNumber}
                                     </p>
                                   </div>
-                                  <span className={`shrink-0 text-base font-bold ${getRiskScoreColor(child.riskLevel)}`}>
-                                    {child.score}%
+                                  <span className="shrink-0 flex items-center gap-3">
+                                    {child.humanVerified ? (
+                                      <span className="flex flex-col items-end leading-tight">
+                                        <span
+                                          title={child.verifiedAt
+                                            ? `已於 ${new Date(child.verifiedAt).toLocaleString("zh-TW", { hour12: false })} 由承辦人員確認`
+                                            : "已由承辦人員確認"}
+                                          className={`text-sm font-bold ${getRiskScoreColor("verified")}`}
+                                        >
+                                          {getRiskText("verified")}
+                                        </span>
+                                        <span className="text-xs text-gray-400">
+                                          模型判定：{getRiskText(child.riskLevel)}
+                                        </span>
+                                      </span>
+                                    ) : (
+                                      <span className={`text-sm font-bold ${getRiskScoreColor(child.riskLevel)}`}>
+                                        {getRiskText(child.riskLevel)}
+                                      </span>
+                                    )}
+                                    <ScorePair text={child.score} image={child.yoloScore} />
                                   </span>
                                 </div>
                               </button>
@@ -584,7 +663,11 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
                     <ExternalLink url={selected.websiteUrl} className="text-blue-600" />
                   </p>
                 )}
-                <p className="text-lg mb-4">風險分數：<span className="font-bold">{selected.score}%</span></p>
+                <p className="text-lg mb-4">
+                  文字分數：<span className="font-bold">{selected.score}</span>
+                  <span className="mx-2 text-gray-300">·</span>
+                  影像分數：<span className="font-bold">{selected.yoloScore}</span>
+                </p>
                 <h3 className="font-semibold mb-2">NLP 關鍵字</h3>
                 <div className="mb-4 flex flex-wrap gap-2">
                   {selected.nlpKeywords.length > 0 ? (
@@ -652,6 +735,7 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
 }
 
 function getRiskText(level: ResultType["riskLevel"]) {
+  if (level === "verified") return "覆核確定為毒品網站";
   if (level === "critical") return "極高風險";
   if (level === "high") return "高風險 (優先人工覆核)";
   if (level === "medium") return "中風險 (建議人工覆核)";
@@ -659,6 +743,7 @@ function getRiskText(level: ResultType["riskLevel"]) {
 }
 
 function getRiskProgressColor(level: ResultType["riskLevel"]) {
+  if (level === "verified") return "bg-violet-600";
   if (level === "critical") return "bg-red-600";
   if (level === "high") return "bg-orange-500";
   if (level === "medium") return "bg-amber-500";
@@ -666,6 +751,9 @@ function getRiskProgressColor(level: ResultType["riskLevel"]) {
 }
 
 function getRiskScoreColor(level: ResultType["riskLevel"]) {
+  // 紫色刻意不在紅→橙→琥珀→綠這條「模型風險程度」色階上：
+  // 它表達的不是更嚴重，而是換了一種依據（人的結論，不是模型的分數）。
+  if (level === "verified") return "text-violet-700";
   if (level === "critical") return "text-red-700";
   if (level === "high") return "text-orange-600";
   if (level === "medium") return "text-amber-600";
