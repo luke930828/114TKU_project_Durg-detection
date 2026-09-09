@@ -21,11 +21,9 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/login/")
 SECRET_KEY = os.environ["JWT_SECRET_KEY"]
 ALGORITHM = "HS256"
 
-# 服務間驗證用的共用密鑰。三個 report 端點（crawler / nlp / ai_result）只給機器打，
-# 人不會經過它們，所以不走 JWT，改用一組固定的 token。
-#
-# 一樣沒設就爆掉，而且空字串也不行——hmac.compare_digest("", "") 會回 True，
-# 等於 .env 漏了一行就靜靜地退回「完全無驗證」，比一開始就沒做還危險。
+# 服務間驗證的共用密鑰。三個 report 端點只給機器打，不走 JWT。
+# 沒設就爆掉，空字串也不行——compare_digest("", "") 回 True，
+# .env 漏一行就靜靜退回「完全無驗證」，比一開始沒做還危險。
 INTERNAL_API_TOKEN = os.environ["INTERNAL_API_TOKEN"]
 if len(INTERNAL_API_TOKEN) < 16:
     raise RuntimeError(

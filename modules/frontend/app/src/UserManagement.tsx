@@ -89,11 +89,9 @@ export default function UserManagement({ onBack, onUnauthorized }: Props) {
     }
 
     if (response.status === 403) {
-      // 正常情況下一般人員根本看不到入口（App.tsx 依角色隱藏）。會走到這裡
-      // 代表 localStorage 的角色跟後端不一致——例如管理員在使用期間被降權，
-      // 或是有人自己去改了 localStorage。
-      //
-      // 這種情況要給明確的說明，不要丟一段紅色的錯誤訊息讓人以為系統壞了。
+      // 一般人員本來看不到入口，會走到這裡代表 localStorage 的角色跟後端不一致
+      // （使用期間被降權，或有人自己改了）。要給明確說明，不要丟紅色錯誤訊息
+      // 讓人以為系統壞了。
       setForbidden(true);
       throw new Error(await getErrorMessage(response));
     }

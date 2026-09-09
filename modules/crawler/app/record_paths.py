@@ -355,11 +355,9 @@ def migrate_legacy_json_to_jsonl(paths: Dict[str, Any]) -> Dict[str, int]:
     for key, old_path, new_path, slim in jobs:
         if not os.path.isfile(old_path) or os.path.getsize(old_path) == 0:
             continue
-        # 來源與目的地是同一個檔就什麼都別做。
-        # config.json 的 record_paths 可以覆寫 json_images——如果那裡還指著
-        # 舊的 Record/images.json，下面就會變成「一邊讀同一個檔、一邊往它
-        # append」的無窮迴圈，檔案會一直長到磁碟滿。
-        # 2026-08-31 實際踩過：713 MB 的檔在三分鐘內長到 10.8 GB。
+        # 來源與目的地同一個檔就什麼都別做，否則會變成「一邊讀同一個檔、
+        # 一邊往它 append」的無窮迴圈，長到磁碟滿。
+        # 2026-08-31 踩過：713 MB 的檔三分鐘長到 10.8 GB。
         if os.path.abspath(old_path) == os.path.abspath(new_path):
             logging.warning(
                 f"[RECORD] {old_path} 與目的地同一個檔，略過遷移。"

@@ -53,11 +53,9 @@ app.add_middleware(
 class PredictRequest(BaseModel):
     url: str            # 被掃描的網址（送給後端用）
     text: str           # 要偵測的文字內容
-    # 這支端點預設會自己把結果回寫到後端的 /api/nlp/report/。
-    # 但「同一個網址要跑第二次」的時候不能這樣——後端拿 OCR 文字再判一次時，
-    # 如果 NLP 自己就把結果寫回去，圖片文字的分數會直接蓋掉網頁文字的分數，
-    # 而圖片文字通常比較零碎、分數偏低，等於愈補愈糟。
-    # 這種情況由呼叫端設 report=False，自己決定要怎麼合併。
+    # 預設會自己把結果回寫到後端。但同一個網址跑第二次時不能這樣——
+    # 後端拿 OCR 文字再判時若 NLP 自己回寫，零碎的圖片文字分數會蓋掉網頁文字的，
+    # 愈補愈糟。那種情況由呼叫端設 report=False 自己決定怎麼合併。
     report: bool = True
     # 截斷長度。預設 256 維持原本的行為不變。
     # 後端把「圖片文字 + 網頁文字」合併後再送一次時會指定 512（XLM-R 的上限），
@@ -161,10 +159,9 @@ def extract_keywords(text: str, top_k: int = 5, max_length: int = 256) -> List[s
     with torch.no_grad():
         outputs = model(**inputs, output_attentions=True)
 
-    # (layers, 1, heads, seq, seq) → 取 CLS 那一行，對 head 取平均 → (seq_len,)
-    #
-    # 只取最後四層。前面幾層的 attention 幾乎是均勻分布的（還在做位置與語法），
-    # 全部層一起平均等於拿一堆雜訊去稀釋真正有鑑別力的後段。
+    # (layers, 1, heads, seq, seq) → 取 CLS 那一行、對 head 取平均 → (seq_len,)
+    # 只取最後四層：前面幾層的 attention 幾乎均勻分布（還在做位置與語法），
+    # 全部一起平均等於拿雜訊稀釋真正有鑑別力的後段。
     attentions = torch.stack(outputs.attentions)
     n_layers = attentions.shape[0]
     cls_attn = attentions[-min(4, n_layers):, 0, :, 0, :].mean(dim=(0, 1)).cpu().tolist()
@@ -240,15 +237,11 @@ async def predict(req: PredictRequest):
 
     label = "DRUG" if pred_idx == 1 else "SAFE"
     # 一律回傳「是毒品的機率」，不要因為 argmax 判成 SAFE 就歸零。
-    #
-    # 舊寫法是 `probs[1] if pred_idx == 1 else 0.0`，等於把 0.49 和 0.001
-    # 都壓成 0——服務永遠不可能回傳 0~50 之間的值，呼叫端的門檻在那個區間
-    # 完全失效。實測 48 筆裡有 22 筆被歸零，其中 4 個是真的毒品網站，
-    # 門檻設多低都救不回來。
-    #
-    # label 仍照 argmax 給，供只要二元結果的呼叫端使用；
-    # 要分級的呼叫端請用 score 自己套門檻。
-    # softmax 不是機率，要校準過分數才對得上實際比例（見 calibration.py）
+    # 舊寫法 `probs[1] if pred_idx == 1 else 0.0` 把 0.49 和 0.001 都壓成 0，
+    # 服務永遠回不出 0~50，呼叫端在那一段的門檻完全失效
+    # （48 筆裡 22 筆被歸零，其中 4 個是真的毒品網站）。
+    # label 仍照 argmax 給；要分級的呼叫端請用 score 自己套門檻。
+    # 另外 softmax 不是機率，要校準過才對得上實際比例（見 calibration.py）。
     drug_score = round(calibrate(float(probs[1])), 4)
 
     # 2. 提取關鍵字（機率 > 0.3 才值得標）

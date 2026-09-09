@@ -434,14 +434,10 @@ def get_result_image(result_id: int, db: Session = Depends(get_db),
     }
 
 
-# 24 小時清單的網域分組
-#
-# 一個網域動輒幾十頁，平鋪的話一頁 50 筆常常全部是同一個站。改成以網域為單位
-# 分頁，同網域的網頁收在底下、點開才查。網域直接用 SQL 從 url 算，
-# 規則跟白名單比對的 registrable_domain() 一致。
+# 24 小時清單以網域分組：一個網域動輒幾十頁，平鋪的話一頁 50 筆常常全是同一個站。
 def _domain_expr():
-    # 規則只寫在 utils.domain_sql_expr 一個地方。這裡再寫一份的話，
-    # 兩邊遲早會不一致——清單分組看到的網域跟白名單清掉的網域對不起來。
+    # 規則只寫在 utils.domain_sql_expr 一處。這裡再寫一份，兩邊遲早不一致——
+    # 清單分組看到的網域會跟白名單清掉的網域對不起來。
     return domain_sql_expr(database.AIAnalysisResult.url)
 
 
@@ -456,11 +452,7 @@ def _not_confirmed_expr():
 
 
 # risk_level 是字串，排序要照嚴重程度而不是字典序。數字越小越嚴重。
-# 已人工確認排最前（-1）——那是人下的結論，比模型判定確定。
-# 等級本身不動：「是不是毒品站」跟「模型給幾級」是兩件事，
-# 混在同一個欄位就會出現「極高風險但影像 0 分」這種對不上的紀錄。
-# 只看規則、不看確認。網域列要同時顯示人的結論與模型判定，
-# 只有 _severity_expr() 的話已確認的一律是 -1，模型那一面就看不到了。
+# 這一版不看有沒有人確認過，網域列要靠它顯示「模型自己怎麼看」。
 def _model_severity_expr():
     return case(
         (database.AIAnalysisResult.risk_level == "極高風險", 0),
@@ -470,6 +462,9 @@ def _model_severity_expr():
     )
 
 
+# 排序用的那一版：已人工確認排最前（-1），那是人下的結論，比模型判定確定。
+# 等級本身不動——「是不是毒品站」跟「模型給幾級」是兩件事，混在同一個欄位
+# 就會出現「極高風險但影像 0 分」這種對不上的紀錄。
 def _severity_expr():
     return case(
         (_confirmed_expr(), -1),
@@ -711,11 +706,9 @@ def get_automated_24h_results(
             "nlp_details": ai_record.nlp_details,
             "nlp_score": ai_record.nlp_score,
             "class_metadata": ai_record.class_metadata,
-            # 代表圖不放進清單。它只有點開明細時才會用到，但每張 base64 可以到
-            # 600 KB，一頁 50 筆就變成近 10 MB——實測 page 5 是 9.8 MB、
-            # page 20 是 9.9 MB，而 page 1、3 只有 24 KB（那幾頁剛好沒圖）。
-            # API 本身都在 0.3 秒內，慢的是傳輸和瀏覽器解碼幾十張 base64。
-            # 改成只回一個布林值，圖由 /api/crawler/result/{id}/image/ 按需取。
+            # 代表圖不放進清單：每張 base64 可到 600 KB，一頁 50 筆近 10 MB。
+            # API 本身都在 0.3 秒內，慢的是傳輸與瀏覽器解碼。
+            # 這裡只回布林值，圖由 /api/crawler/result/{id}/image/ 按需取。
             "has_representative_image": bool(ai_record.representative_image_path
                                              or ai_record.representative_image_base64),
             # ocr_results 不回傳。前端不顯示 OCR——圖片裡的文字是拿去餵 NLP、

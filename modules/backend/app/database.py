@@ -61,7 +61,6 @@ class AuditLog(Base):
     
     user = relationship("User", back_populates="audit_logs")
 # 4. 定義：「可疑網站黑名單」資料表
-# 4. 定義：「可疑網站黑名單」資料表
 class SuspectWebsite(Base):
     __tablename__ = "suspect_websites"
 
@@ -134,30 +133,24 @@ class AIAnalysisResult(Base):
     representative_image_path = Column(String(128), nullable=True)
 
     # 人工覆核的結論，跟模型判定分開存。
-    #
-    # 以前人工確認是直接把 risk_level 改成「極高風險」，跟模型自己判的同一個值——
-    # 結果下一次 AI 回報進來就重算 risk_level，把人的結論蓋掉。
-    # 實際發生過：三筆 09-05 確認的紀錄，被後續的影像補跑重算回「高風險」。
+    # 以前確認是直接把 risk_level 改成「極高風險」，跟模型判的同一個欄位，
+    # 下一次 AI 回報進來重算就把人的結論蓋掉（09-05 有三筆這樣被洗掉）。
     human_verified = Column(Boolean, default=False)
     human_verified_at = Column(DateTime, nullable=True)
     human_verified_by = Column(String(50), nullable=True)
     representative_image_detections = Column(JSON, nullable=True)
-    # OCR 是由影像分析引擎回傳的結構化結果；保留 JSON，避免把每個辨識框拆成
-    # 多張資料表後破壞既有 API 的回傳格式。
+    # 影像引擎回傳的結構化結果。保留 JSON，拆成多張表會破壞既有 API 格式。
     ocr_results = Column(JSON, nullable=True)
     task_source = Column(String(100), default="未知來源")
     created_at = Column(DateTime, default=func.now())
 
 
-# 既有資料庫要補的欄位。create_all 只會「建不存在的表」，絕不會 ALTER
-# 已存在的表——所以每次替既有的表加欄位，都得在這裡登記一筆，
-# 否則組員 pull 之後程式讀得到欄位、資料庫沒有，一查就 1054 Unknown column。
-#
-# (表名, 欄位名, 完整的 DDL 片段)
+# 既有資料庫要補的欄位。create_all 只建不存在的表，不會 ALTER 已存在的表，
+# 所以加欄位都要在這裡登記，否則組員 pull 之後會撞 1054 Unknown column。
+# (表名, 欄位名, DDL 片段)
 _PENDING_COLUMNS = [
     ("ai_analysis_results", "ocr_results", "JSON NULL"),
-    # 白名單的來源分類（一般新增 / 誤判回報）。原本是請組員自己下 SQL，
-    # 但那種「請大家記得手動跑」的步驟一定會有人漏掉，放進這裡自動補。
+    # 白名單來源分類（一般新增 / 誤判回報）。「請大家記得手動跑」一定有人漏。
     ("whitelist_websites", "source", "VARCHAR(20) DEFAULT '一般新增'"),
     # 代表圖搬到檔案系統之後，這裡存的是相對路徑而不是內容。
     ("ai_analysis_results", "representative_image_path", "VARCHAR(128) NULL"),
@@ -167,12 +160,10 @@ _PENDING_COLUMNS = [
 ]
 
 
-# 既有欄位要「改型別」時登記在這裡。上面的 _PENDING_COLUMNS 只加新欄位，
-# 理由跟那邊一樣：靠「請組員記得手動下 SQL」一定有人漏掉。
-#
+# 既有欄位要「改型別」時登記在這裡（上面那份只加新欄位）。
 # (表名, 欄位名, 目標 DDL, MySQL 回報的 COLUMN_TYPE)
-# 最後那個要填 information_schema 裡的字串（小寫），不能用 SQLAlchemy 的型別——
-# 它的 str() 不帶 fsp，比對永遠不相等，會變成每次啟動都重建整張表。
+# 最後那個要填 information_schema 的字串（小寫）。用 SQLAlchemy 的型別不行——
+# 它的 str() 不帶 fsp，比對永遠不相等，每次啟動都會重建整張表。
 _PENDING_COLUMN_TYPES = [
     # 稽核時間改成微秒精度，見 AuditLog.action_timestamp 的說明。
     ("audit_logs", "action_timestamp", "DATETIME(6) NULL", "datetime(6)"),

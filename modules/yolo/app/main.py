@@ -5,11 +5,10 @@ import threading
 import time
 from pathlib import Path
 
-# 1) Windows 主控台預設可能是 cp950/cp936 這類非 UTF-8 編碼，print() 印到非 ASCII 字元會直接
-#    UnicodeEncodeError 炸掉——而且這個炸裂還會發生在 except 區塊自己的錯誤訊息裡，導致真正的錯誤被吃掉。
-# 2) line_buffering=True 是真正關鍵：只要 stdout 被導到檔案/管線（不是互動式終端機，log 蒐集一定是這樣），
-#    Python 預設會整段 buffer 起來，print() 不會馬上寫進 log，看起來就像背景任務卡住/沒反應——
-#    其實程式早就跑完了，只是訊息還沒被沖出來。強制 line-buffering 確保每一行 print 立刻可見。
+# 1) Windows 主控台可能是 cp950 這類非 UTF-8 編碼，print 中文會 UnicodeEncodeError，
+#    而且會炸在 except 自己的錯誤訊息裡，真正的錯誤被吃掉。
+# 2) line_buffering 才是關鍵：stdout 導到檔案或管線時 Python 會整段 buffer，
+#    print 不會馬上進 log，看起來像卡住，其實早就跑完了。
 if hasattr(sys.stdout, "reconfigure"):
     sys.stdout.reconfigure(encoding="utf-8", line_buffering=True)
 if hasattr(sys.stderr, "reconfigure"):
@@ -54,13 +53,10 @@ try:
 except Exception as e:
     print(f"[錯誤] 模型載入失敗，請確認 {MODEL_PATH} 是否存在！錯誤: {e}")
 
-# 1b. 載入 OCR 引擎（EasyOCR，繁中+英文）。跟 YOLO 模型一樣：失敗就設成 None、
-# 不讓服務直接掛掉，/health 照實回報，OCR 掛了不影響 YOLO 的計分（解耦設計）。
-#
-# 預設用 GPU。CPU 模式一張要 8 秒，跟爬蟲的產出速度差一個量級：請求會在
-# FastAPI 的執行緒池裡積壓，每一個都抱著一張 base64 圖片，記憶體一路往上爬到
-# 撞容器上限被砍，手上沒做完的批次全部消失。
-# 顯存小的機器把 OCR_USE_GPU 設成 0，就退回 CPU 行為。
+# 1b. 載入 OCR 引擎（EasyOCR，繁中+英文）。跟 YOLO 一樣失敗就設 None 不讓服務掛掉。
+# 預設用 GPU：CPU 一張要 8 秒，跟爬蟲的產出速度差一個量級，請求會在執行緒池裡
+# 積壓（每個都抱著一張 base64 圖），記憶體一路爬到撞容器上限被砍。
+# 顯存小的機器把 OCR_USE_GPU 設 0 退回 CPU。
 ocr_reader = None
 try:
     use_gpu = os.getenv("OCR_USE_GPU", "1") not in ("0", "false", "False", "")
@@ -121,33 +117,22 @@ def select_visible_detections(detections, visual_result):
 BATCH_MEMORY = {}
 memory_lock = threading.Lock()
 
-# OCR 一次只跑一個。
-# EasyOCR 是第二個模型，而且每一張圖都要跑一次推論；FastAPI 的 BackgroundTasks
-# 會把同步函式丟進 threadpool（預設 40 條），等於幾十個推論並行、每一個都自己配
-# 一份張量，記憶體峰值直接把容器打掛。
-# 序列化之後只有一個推論在跑，其餘執行緒在這裡等——會變慢，但排隊遠比整台機器
-# 被打掛好。真的太慢再往上調，記憶體是線性增加的。
+# OCR 一次只跑一個。FastAPI 會把同步函式丟進執行緒池（預設 40 條），
+# 幾十個推論並行、各配一份張量，記憶體峰值直接把容器打掛。
+# 序列化會變慢，但排隊遠比整台機器被打掛好。記憶體是線性增加的。
 OCR_SEMAPHORE = threading.Semaphore(1)
 
-# OCR 前先把圖縮小。
-#
-# 商品圖常常是 2000px 以上，但要讀的是包裝上的字，不需要那個解析度——
-# EasyOCR 自己也會縮（canvas_size 預設 2560）。先縮可以省下解碼後那份大陣列
-# 以及推論時的張量。長邊 1920 對讀字綽綽有餘。
+# OCR 前先縮圖。商品圖常有 2000px 以上，但要讀的是包裝上的字，
+# EasyOCR 自己也會縮。先縮可省下解碼後的大陣列與推論張量，1920 讀字夠用。
 OCR_MAX_SIDE = 1920
 
-# 代表圖（前端拿來畫框展示用）的大小上限。後端的 Schema 擋在一千萬字元，
-# 超過就會把整份回報退成 422——實測有網址的商品圖是超大 PNG，
-# YOLO 分析完了卻因為這張圖被整筆擋掉，那一列就永遠停在「影像分析中...」。
-# 展示圖用不到那個解析度，這裡先縮好再送。
+# 代表圖的大小上限。後端 Schema 擋在一千萬字元，超過整份回報退 422——
+# 實測有商品圖是超大 PNG，分析完了卻被整筆擋掉，那列就永遠停在「影像分析中...」。
 DISPLAY_MAX_B64_CHARS = 2_000_000
 DISPLAY_MAX_SIDE = 1280
 
-# 沒收齊的批次要過期清掉。
-#
-# BATCH_MEMORY[batch_id] 只有在 processed_count == total_images 時才會被刪。
-# 只要有一張圖沒送到（爬蟲少送、請求失敗、yolo 中途重啟），這一筆就永遠留著，
-# 而且裡面存著代表圖的 base64——不會有任何錯誤訊息，就是慢慢漏。
+# 沒收齊的批次要過期清掉。BATCH_MEMORY 只有在全部圖到齊時才會刪，
+# 少送一張就永遠留著，裡面還存著代表圖的 base64——不會報錯，就是慢慢漏。
 BATCH_TTL_SECONDS = 30 * 60
 
 # 4. 影像解碼小工具 (記憶體直接流轉，完全不寫入硬碟，速度最快)
@@ -360,11 +345,9 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
                 representative_image_detections = BATCH_MEMORY[batch_id]["best_display_image_detections"]
                 batch_ocr_texts = BATCH_MEMORY[batch_id]["ocr_texts"]
 
-                # 批次分數：把整批圖片合併成「一份」類別證據（每個類別取全批最高信心度），
-                # 直接套用跟單張圖一樣的存在即採計＋組合加成公式，不再對每張圖的分數取平均。
-                # 平均會讓真正的強證據（例如 15 張圖裡有幾張很清楚的大麻符號）被其餘普通照片稀釋掉，
-                # 導致整批評分被拉低、跟實際風險不成比例；改成這樣之後只要批次裡出現過一次高信心度證據，
-                # 不管其他照片多平凡，批次分數都會反映那個最高信心度。
+                # 整批合併成「一份」類別證據（每類取全批最高信心度），套跟單張一樣的公式。
+                # 取平均的話，15 張圖裡幾張很清楚的大麻符號會被其餘普通照片稀釋掉，
+                # 整批分數跟實際風險不成比例。
                 batch_visual_result = compute_visual_risk(batch_class_metadata)
                 final_risk_score = batch_visual_result["visual_score"]
 
