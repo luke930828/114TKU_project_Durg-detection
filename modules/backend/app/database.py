@@ -112,14 +112,10 @@ class AIAnalysisResult(Base):
     __tablename__ = "ai_analysis_results"
 
     id = Column(Integer, primary_key=True, index=True)
-    # unique：一個網址只該有一筆分析結果。
-    # 沒有這個約束時，兩個併發請求會各自「查不到 → 新增」，產生兩列同網址的紀錄；
-    # 之後所有 filter(url == ...).first() 都只會拿到較早的那一列，
-    # 另一列永遠沒人更新，就一直卡在「影像分析中...」而且不會有人發現。
-    # 實際發生過 5 次（都在 2 秒內）。
-    #
-    # 768 是 InnoDB 在 utf8mb4 下單一索引鍵的上限（768 × 4 = 3072 bytes），
-    # 再長就建不出唯一索引。
+    # 一個網址只該有一筆分析結果。沒有這個約束時，兩個併發請求會各自
+    # 「查不到 → 新增」，之後 filter(url==...).first() 永遠只拿到較早那列，
+    # 另一列沒人更新就一直卡在「影像分析中...」。實際發生過 5 次。
+    # 768 是 InnoDB 在 utf8mb4 下索引鍵的上限（768 × 4 = 3072 bytes）。
     url = Column(String(768), unique=True, index=True, nullable=False)
     
     yolo_details = Column(String(500))  
@@ -239,8 +235,7 @@ def initialize_database():
                 f"GROUP BY {column} HAVING COUNT(*) > 1) t"
             )).scalar()
             if dup:
-                # 有重複就不要硬建——建不起來，而且把啟動流程弄爆比留著索引沒建更糟。
-                # 印出來讓人先去清乾淨，清完重啟就會自動補上。
+                # 有重複就不硬建。建不起來，而且弄爆啟動流程比索引沒建更糟。
                 print(f"{table}.{column} 有 {dup} 組重複值，唯一索引先不建。"
                       f"請先清掉重複的資料再重啟。")
                 continue

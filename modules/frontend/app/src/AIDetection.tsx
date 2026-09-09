@@ -41,8 +41,7 @@ interface RepresentativeDetection {
 interface ResultType {
   id: string | number;
   yoloScore: number;
-  // 「人確認過這是毒品站」跟「模型判幾級」是兩件事。
-  // 等級只由規則決定，確認與否要另外顯示，不然畫面上看不出差別。
+  // 「人確認過」跟「模型判幾級」是兩件事，要分開顯示
   humanVerified: boolean;
   verifiedAt: string | null;
   time: string;
@@ -50,9 +49,8 @@ interface ResultType {
   content: string;
   drugType: string;
   language: string;
-  // verified 不是「更嚴重的一級」，而是另一個維度：人已經確認過。
-  // 放進同一個聯集是因為清單上這一格只顯示一個標籤，
-  // 而「已經有人確定它是毒品網站」永遠比模型判幾級更該讓人看到。
+  // verified 不是「更嚴重的一級」，是另一個維度。放同一個聯集是因為
+  // 清單上這格只放得下一個標籤，而「有人確定是毒品站」比等級更該被看到。
   riskLevel: "verified" | "critical" | "high" | "medium" | "low";
   score: number;
   caseNumber: string;
@@ -72,8 +70,8 @@ interface DomainRow {
   riskLevel: ResultType["riskLevel"];
   // 這個網域底下有幾頁被人確認過
   verifiedCount: number;
-  // 模型自己怎麼看（不含人工確認的影響）。已確認的網域主標籤會蓋掉等級，
-  // 這個欄位讓模型的判定仍然看得到，不然畫面上只剩人的結論。
+  // 模型自己怎麼看。已確認的網域主標籤會蓋掉等級，
+  // 這個欄位讓模型的判定仍然看得到。
   modelRiskLevel: ResultType["riskLevel"];
   date: string;
 }
@@ -132,9 +130,8 @@ const normalizeKeywords = (value: unknown): string[] => {
 // 後端怎麼改都沒有作用，2026-08-30 把加權平均改成門檻判定時就是這樣被吃掉的。
 const normalizeRiskLevel = (level: string): ResultType["riskLevel"] => {
   const l = (level ?? "").trim();
-  // 後端網域列會把「這個網域底下有人確認過」回成「已人工確認」。
-  // 沒有這一行的話會掉進最後的 return "low"，畫面上顯示成綠色低風險——
-  // 已經確定是毒品網站的網域標成低風險，那是最糟的一種錯。
+  // 後端網域列會回「已人工確認」。少了這行會掉進最後的 return "low"，
+  // 已確定是毒品站的網域顯示成綠色低風險——那是最糟的一種錯。
   if (l.startsWith("已人工確認") || l.startsWith("覆核")) return "verified";
   if (l.startsWith("極高風險")) return "critical";
   if (l.startsWith("高風險")) return "high";
@@ -420,9 +417,8 @@ export function AIDetection({ onBack, onDetectionsLoaded }: Props) {
     setCurrentPage(page);
   };
 
-  // 「覆核過」不是等級，是另一個維度，所以單獨判斷：
-  // 網域列只要底下有任何一頁被確認過就算。用 riskLevel === "verified"
-  // 也可以，但那依賴後端剛好把 worst 算成 -1，條件藏得太深。
+  // 「覆核過」不是等級，單獨判斷：底下有任何一頁被確認過就算。
+  // 用 riskLevel === "verified" 也行，但那依賴後端把 worst 算成 -1，藏太深。
   const filtered =
     filterRisk === "all"
       ? data
@@ -751,8 +747,8 @@ function getRiskProgressColor(level: ResultType["riskLevel"]) {
 }
 
 function getRiskScoreColor(level: ResultType["riskLevel"]) {
-  // 紫色刻意不在紅→橙→琥珀→綠這條「模型風險程度」色階上：
-  // 它表達的不是更嚴重，而是換了一種依據（人的結論，不是模型的分數）。
+  // 紫色刻意不在紅→橙→琥珀→綠那條色階上：它不是「更嚴重」，
+  // 而是換了一種依據（人的結論，不是模型的分數）。
   if (level === "verified") return "text-violet-700";
   if (level === "critical") return "text-red-700";
   if (level === "high") return "text-orange-600";

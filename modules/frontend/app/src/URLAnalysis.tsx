@@ -664,10 +664,8 @@ export function URLAnalysis({ onBack }: URLAnalysisProps) {
             <div className="flex items-center gap-2 mb-4">
               <AlertTriangle
                 className={
-                  // 依風險等級判色，不要在前端自己訂分數門檻。
-                  // 這裡原本寫死 74，那是 2026-08 之前的舊規則；門檻改過三次
-                  // （74 → 90/60 → 85/30），前端這一行都沒跟著改。
-                  // 分級規則只存在於後端的 utils.py，前端讀等級就好。
+                  // 讀等級判色，不要在前端自己訂門檻。
+                  // 原本寫死 74，後來門檻改過三次這行都沒跟著改。
                   (analysisData.risk_level || "").startsWith("極高")
                     ? "text-red-500"
                     : "text-yellow-500"

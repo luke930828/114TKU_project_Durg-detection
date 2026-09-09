@@ -248,9 +248,7 @@ async def predict(req: PredictRequest):
     #
     # label 仍照 argmax 給，供只要二元結果的呼叫端使用；
     # 要分級的呼叫端請用 score 自己套門檻。
-    # 校準：softmax 的輸出不是機率，是信心值。這個模型對多數頁面給 99% 以上，
-    # 但那批實際只有約 82% 是毒品站。校準後分數才對得上實際比例，
-    # 門檻也才落在直覺位置（見 calibration.py）。
+    # softmax 不是機率，要校準過分數才對得上實際比例（見 calibration.py）
     drug_score = round(calibrate(float(probs[1])), 4)
 
     # 2. 提取關鍵字（機率 > 0.3 才值得標）

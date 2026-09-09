@@ -142,9 +142,8 @@ def receive_crawler_raw_data(
                 _apply_blacklist(ai_row)
                 db.commit()
             else:
-                # 「查不到就新增」在併發下會有兩個請求同時走到這裡。
-                # url 上有唯一索引，後到的那個會拿到 IntegrityError，
-                # 這時改成更新對方剛建好的那一列，而不是留下第二列。
+                # 併發時兩個請求會同時走到這裡。url 有唯一索引，
+                # 後到的那個會拿到 IntegrityError，改成更新對方剛建好的那列。
                 try:
                     ai_row = database.AIAnalysisResult(url=report.url)
                     _apply_blacklist(ai_row)
@@ -186,9 +185,7 @@ def receive_crawler_raw_data(
                     task_source=f"[{report.task_type}] 爬蟲自動通報"
                 )
                 db.add(new_ai_record)
-                # 同上：併發時後到的請求會撞到 url 的唯一索引。
-                # 這一筆是「攔截歸檔為 0 分」，對方那一列已經存在就不必再蓋，
-                # 直接放掉即可——重複建檔才是要避免的事。
+                # 同上。這筆只是「攔截歸檔為 0 分」，對方那列已存在就不必再蓋。
                 try:
                     db.commit()
                 except IntegrityError:
@@ -315,19 +312,15 @@ def report_false_positive(
 def confirm_result(result_id: int, db: Session = Depends(get_db),
                    # 同上：覆核開放給一般人員，效果等同於 POST /api/blacklist/。
                    current_admin: database.User = Depends(get_current_user)):
-    """
-    記下「這筆已經有人看過並確認是毒品網站」，並讓它進入黑名單清單。
+    """記下「有人看過並確認是毒品網站」，讓它進入黑名單清單。
 
-    <b>不動 risk_level</b>。等級是規則算出來的（文字 ≥ 85 且影像 ≥ 30 才是極高），
-    以前這裡直接寫成「極高風險」，結果資料庫裡出現一堆影像 0 分卻標極高的紀錄，
-    等級這個欄位變成「規則判定或人工確認」兩種意思混在一起，對不上也解釋不了。
+    不動 risk_level。等級是規則算的，以前這裡直接寫成「極高風險」，
+    結果資料庫裡出現一堆影像 0 分卻標極高的紀錄，解釋不了。
+    現在分開：等級表示模型怎麼看，human_verified 表示人怎麼看，
+    清單歸屬由後者優先（見 bucket 過濾）。
 
-    現在分開：risk_level 只表示模型怎麼看，human_verified 表示人怎麼看，
-    清單歸屬由後者優先決定（見 bucket 過濾）。
-
-    在這之前，待確認清單的分類按鈕只改前端記憶體，重新整理就沒了——
-    也就是說沒有任何一次人工覆核被記錄下來。對數位證據系統來說，
-    「誰在什麼時候確認了這筆」比判定結果本身更重要。
+    更早以前這顆按鈕只改前端記憶體，重新整理就沒了——
+    對證據系統來說，「誰在什麼時候確認的」比判定結果本身更重要。
     """
     row = db.query(database.AIAnalysisResult).filter(
         database.AIAnalysisResult.id == result_id).first()
@@ -382,9 +375,9 @@ def confirm_results_batch(
 
     confirmed, skipped = [], []
     for row in rows:
-        # 略過條件看的是「有沒有人確認過」，不是等級。
-        # 用等級判斷的話，規則本來就算出極高風險的那些永遠會被略過，
-        # 於是它們的 human_verified 永遠寫不進去。
+        # 看有沒有人確認過，不是看等級。
+        # 用等級判斷的話，規則本來就算成極高的那些永遠被略過，
+        # human_verified 就永遠寫不進去。
         if row.human_verified:
             skipped.append(row.id)
             continue
@@ -452,8 +445,7 @@ def _domain_expr():
     return domain_sql_expr(database.AIAnalysisResult.url)
 
 
-# 「已人工確認」。human_verified 允許 NULL（欄位是後來加的），
-# 直接寫 == True 會漏掉 NULL 的舊資料，所以一律用 is_(True) 判斷。
+# human_verified 允許 NULL（欄位是後來加的），用 is_() 判斷才不會漏掉舊資料。
 def _confirmed_expr():
     return database.AIAnalysisResult.human_verified.is_(True)
 
@@ -463,14 +455,12 @@ def _not_confirmed_expr():
                database.AIAnalysisResult.human_verified.is_(None))
 
 
-# risk_level 是字串，排序要照「嚴重程度」而不是字典序。
-# 數字越小越嚴重，取 MIN 就是這個網域裡最嚴重的那一頁。
-#
-# 已人工確認的排在最前面（-1）：那是人下的結論，比任何模型判定都確定。
-# 等級本身維持規則算出來的值不動——「這是不是毒品站」跟「模型給幾級」
-# 是兩件事，混在同一個欄位就會出現「極高風險但影像 0 分」這種對不上的紀錄。
-# 只看規則、不看有沒有人確認過。網域列要同時顯示「人的結論」與「模型判定」，
-# 光有 _severity_expr() 的話，已確認的網域一律是 -1，模型那一面就看不到了。
+# risk_level 是字串，排序要照嚴重程度而不是字典序。數字越小越嚴重。
+# 已人工確認排最前（-1）——那是人下的結論，比模型判定確定。
+# 等級本身不動：「是不是毒品站」跟「模型給幾級」是兩件事，
+# 混在同一個欄位就會出現「極高風險但影像 0 分」這種對不上的紀錄。
+# 只看規則、不看確認。網域列要同時顯示人的結論與模型判定，
+# 只有 _severity_expr() 的話已確認的一律是 -1，模型那一面就看不到了。
 def _model_severity_expr():
     return case(
         (database.AIAnalysisResult.risk_level == "極高風險", 0),
@@ -549,9 +539,9 @@ def get_automated_24h_results(
             conditions.append(database.AIAnalysisResult.id == int(keyword))
         base_query = base_query.filter(or_(*conditions))
 
-    # 清單歸屬看「人的結論優先，沒有人的結論才看模型」。
-    # 只看 risk_level 的話，已經被確認、但影像分數不到 30 的那些（規則算出來是
-    # 高風險）會永遠留在待確認清單裡，等於確認了也沒用。
+    # 人的結論優先，沒有人的結論才看模型。
+    # 只看 risk_level 的話，確認過但影像不到 30 的（規則算成高風險）
+    # 會永遠留在待確認清單裡，等於確認了也沒用。
     if bucket == "blacklist":
         base_query = base_query.filter(or_(
             database.AIAnalysisResult.risk_level == "極高風險",
@@ -648,7 +638,7 @@ def get_automated_24h_results(
 
     # 統計也依 risk_level，不要再用 risk_score 自己切一套門檻
     total_count = base_query.count()
-    # 統計用跟 bucket 完全相同的條件，否則清單顯示 N 筆、上面的數字寫別的
+    # 條件要跟 bucket 一致，不然清單顯示 N 筆、上面的數字寫別的
     high_risk_count = base_query.filter(or_(
         database.AIAnalysisResult.risk_level == "極高風險",
         _confirmed_expr())).count()
@@ -711,8 +701,7 @@ def get_automated_24h_results(
             "status": status,                            
             "task_source": ai_record.task_source, 
             "risk_level": ai_record.risk_level,
-            # 前端要能把「人確認過」跟「模型判極高」分開顯示——
-            # 兩者現在是獨立的兩件事，畫面上不能只看得到等級。
+            # 「人確認過」與「模型判極高」是獨立的兩件事，前端要分開顯示
             "human_verified": bool(ai_record.human_verified),
             "human_verified_at": (ai_record.human_verified_at.isoformat()
                                   if ai_record.human_verified_at else None),
