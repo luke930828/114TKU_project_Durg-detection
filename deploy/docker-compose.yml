@@ -183,6 +183,15 @@ services:
     profiles: ["full"]
     deploy:
       resources:
+        reservations:
+          # 跟 yolo 共用同一張卡。XLM-R base 約 1.5 GB 顯存，
+          # yolo 尖峰約 10.5 GB，16 GB 的卡放得下兩個。
+          # 沒有這段的話 torch.cuda.is_available() 是 False，模型會靜靜地跑在 CPU 上——
+          # 一次前向 105 ms，是 GPU 的十幾倍，而且不會有任何錯誤訊息。
+          devices:
+            - driver: nvidia
+              device_ids: ["0"]
+              capabilities: [gpu]
         limits:
           # XLM-RoBERTa 載入後常駐約 2~3 GB，留一倍餘裕
           memory: 6G

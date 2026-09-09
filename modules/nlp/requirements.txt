@@ -3,6 +3,4 @@ uvicorn==0.47.0
 httpx==0.28.1
 pydantic==2.13.4
 transformers==5.3.0
-torch==2.5.1
-# 學校主機有 GPU 的話把上面換成：torch==2.5.1+cu121
-# 並在安裝時加上 --index-url https://download.pytorch.org/whl/cu121
+# torch 不在這裡，見 requirements-torch.txt

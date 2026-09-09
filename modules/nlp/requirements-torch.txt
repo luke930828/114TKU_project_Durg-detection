@@ -1,0 +1,12 @@
+# torch 單獨一個檔案，Dockerfile 才能把它裝在自己的一層。理由同 yolo：
+# GPU 版 torch 連帶一整包 CUDA 執行期函式庫（4.5 GB），來源又慢，
+# 跟其他套件混在同一個 pip install 的話，requirements.txt 改一行就要重抓。
+#
+# 版本要跟 yolo 對齊。這張卡是 RTX 5060 Ti（Blackwell，sm_120），
+# torch 2.5.1+cu124 的核心只編到 sm_90，跑起來會是
+# 「CUDA error: no kernel image is available for execution on the device」——
+# 而且在那之前 torch.cuda.is_available() 還是 True，看起來一切正常。
+#
+# 沒有 GPU 的機器：把下面換成 torch==2.10.0（不帶 +cu128），
+# 並把 Dockerfile 的 --extra-index-url 與 compose 裡 nlp 的 devices 區塊註解掉。
+torch==2.10.0+cu128
