@@ -9,6 +9,8 @@ from pydantic import BaseModel
 from transformers import AutoTokenizer, AutoModelForSequenceClassification
 from typing import List, Optional
 
+from calibration import calibrate
+
 # ── 模型設定 ──────────────────────────────────────────────────────────────────
 # 微調過的模型放在 Hugging Face Hub，容器啟動時直接下載，不用把 1GB+ 權重包進 image
 MODEL_ID = os.getenv("MODEL_ID", "matt0513/drug-detection-xlm-roberta")
@@ -246,7 +248,10 @@ async def predict(req: PredictRequest):
     #
     # label 仍照 argmax 給，供只要二元結果的呼叫端使用；
     # 要分級的呼叫端請用 score 自己套門檻。
-    drug_score = round(float(probs[1]), 4)
+    # 校準：softmax 的輸出不是機率，是信心值。這個模型對多數頁面給 99% 以上，
+    # 但那批實際只有約 82% 是毒品站。校準後分數才對得上實際比例，
+    # 門檻也才落在直覺位置（見 calibration.py）。
+    drug_score = round(calibrate(float(probs[1])), 4)
 
     # 2. 提取關鍵字（機率 > 0.3 才值得標）
     keywords = extract_keywords(text, max_length=max_length) if drug_score > 0.3 else []

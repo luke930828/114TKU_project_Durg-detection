@@ -22,9 +22,11 @@ def export_raw_results_to_excel(
     query = db.query(
         database.AIAnalysisResult.id,
         database.AIAnalysisResult.url,
-        database.AIAnalysisResult.risk_score,
         database.AIAnalysisResult.risk_level,
-        database.AIAnalysisResult.created_at 
+        # 文字與影像分數分開取，不用合成的 risk_score
+        database.AIAnalysisResult.nlp_score,
+        database.AIAnalysisResult.yolo_score,
+        database.AIAnalysisResult.created_at
     )
     
     # 日期一定要先驗格式再丟進查詢。
@@ -53,12 +55,17 @@ def export_raw_results_to_excel(
     if not results:
         raise HTTPException(status_code=404, detail="目前沒有符合該時間區間的分析資料可以匯出")
 
+    # 文字與影像分數分開列，不合成單一分數。
+    # 風險等級是二維判斷（文字 ≥ 門檻、影像有沒有附和），
+    # 只給一個分數的話報表讀者無法解釋為什麼同樣 100 分卻是不同等級。
     data_list = [
         {
-            "id": row.id,
-            "url": row.url,
-            "risk_score": row.risk_score,
-            "risk_level": row.risk_level
+            "案件編號": row.id,
+            "網址": row.url,
+            "風險等級": row.risk_level,
+            "文字分數": row.nlp_score,
+            "影像分數": row.yolo_score,
+            "發現時間": row.created_at.strftime("%Y-%m-%d %H:%M:%S") if row.created_at else "",
         }
         for row in results
     ]
