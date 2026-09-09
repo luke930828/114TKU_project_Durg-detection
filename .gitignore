@@ -90,10 +90,8 @@ deploy/certs/
 deploy/acme-challenge/
 deploy/lego/
 
-# 這幾支是這台機器專屬的維運腳本，裡面有校園 IP、ACME 註冊用的 email
-# 與 WSL 特有的設定，不進版控。要給組員的話另外傳。
-# （scripts/ 底下其餘檔案照常進版控——Makefile 的 smoke / models /
-#   restore-help 都依賴它們，一起拿掉會讓組員 pull 之後那些指令直接壞掉。）
-scripts/issue-cert.sh
-scripts/renew-cert.sh
-scripts/disable-wsl-coredumps.sh
+# scripts/ 整個不進版控：裡面有校園 IP、ACME 註冊用的 email、WSL 專屬設定，
+# 以及一次性的資料搬遷與還原腳本（都直接連生產資料庫）。要給組員的話另外傳。
+# 注意：Makefile 的 smoke / models / restore-help 依賴這裡的檔案，
+# 組員 clone 之後那幾個指令會找不到腳本。
+scripts/
