@@ -1,5 +1,5 @@
 """
-YOLO 訓練腳本 (16 類別 / v2)
+YOLO 訓練腳本 (15 類別 / v3，拿掉 medical_bottle 後的版本)
 
 用法：
     python -m src.ai_model.train              # 從 base_model 開始全新訓練
@@ -34,7 +34,7 @@ if hasattr(sys.stdout, "reconfigure"):
 @dataclass
 class TrainConfig:
     base_model: str = "models/yolo11n.pt"        # 訓練起點的基礎模型
-    data_yaml: str = "data/processed/data.yaml"  # 16 類別訓練資料清單
+    data_yaml: str = "data/processed/data.yaml"  # 15 類別訓練資料清單（v2-6-no-bottle：拿掉 medical_bottle）
     epochs: int = 150                            # 資料量不大 + 類別嚴重不平衡，拉高上限交給 patience 決定何時停
     patience: int = 30                           # mAP50-95 連續 30 epoch 沒進步就自動早停，避免對多數類過擬合
     imgsz: int = 640                             # Roboflow 匯出的圖片本身就是 640x640，不需要再放大
@@ -43,7 +43,8 @@ class TrainConfig:
     device: Union[int, str] = field(default_factory=lambda: 0 if torch.cuda.is_available() else "cpu")
     project: str = ""                             # 留空即可：Ultralytics 對相對路徑的 project 會自動加上 runs/<task>/ 前綴，
                                                    # 這裡若填 "runs/detect" 會被重複套用變成 runs/detect/runs/detect/<name>
-    name: str = "drug_prevention_v2"             # 這次實驗的名稱
+    name: str = "drug_prevention_v3_15class"      # 這次實驗的名稱；v2 是 16 類（含 medical_bottle）的舊紀錄，
+                                                   # 類別數不同不能 resume，故意換新名字避免覆蓋掉 v2 的歷史紀錄
     exist_ok: bool = True                        # 名稱重複時直接覆蓋
     deploy_dir: Path = Path("models")            # 最終權重要部署到哪個資料夾
     deploy_filename: str = "best.pt"             # api_server.py 實際載入的檔名
@@ -130,7 +131,7 @@ def print_training_banner(config: TrainConfig) -> None:
         print("⏯️ [接續訓練] 防毒影像辨識模型 - 從上次中斷的地方繼續")
         print(f"   接續檢查點 : {resolve_resume_checkpoint(config)}")
     else:
-        print("🚀 [訓練啟動] 防毒影像辨識模型 - 16 類別訓練流程")
+        print("🚀 [訓練啟動] 防毒影像辨識模型 - 15 類別訓練流程")
         print(f"   基礎模型   : {config.base_model}")
     print(f"   訓練資料   : {config.data_yaml}")
     print(f"   Epochs     : {config.epochs} (patience={config.patience})")
@@ -241,7 +242,7 @@ def train_model(config: TrainConfig = None) -> Path:
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="YOLO 訓練腳本 (16 類別 / v2)")
+    parser = argparse.ArgumentParser(description="YOLO 訓練腳本 (15 類別 / v3)")
     parser.add_argument(
         "--resume",
         action="store_true",

@@ -10,10 +10,10 @@ import uuid
 from sqlalchemy.exc import IntegrityError # 
 app = FastAPI(title="多模態毒品防制系統 API", description="符合原始表與 AI 展示表分離架構")
 
-# NLP 控分覆寫規則的關鍵字表 —— 唯一標準來源，跟 src/ai_model/scoring.py 的 16 類權重表是同一層級的設定
+# NLP 控分覆寫規則的關鍵字表 —— 唯一標準來源，跟 modules/yolo/app/ai_model/scoring.py 的 15 類權重表是同一層級的設定
 NLP_WHITELIST_TERMS = ["無尼古丁", "普洱茶葉", "漢方草本", "薄荷涼糖", "合法軟糖"]  # 規則 A：命中即一票否決，強制降到低風險
-NLP_BLACKLIST_TERMS = ["thc", "cbd", "依託咪酯", "喪屍煙油", "飛行", "埋車"]      # 規則 B：命中且視覺側只有中性載具時，補刀升級成高風險
-VISUAL_CARRIER_ONLY_CLASSES = {"medical_bottle", "ziplock_bag"}                  # 規則 B 判定「只有載具」的白名單類別
+NLP_BLACKLIST_TERMS = ["thc", "cbd", "依託咪酯", "喪屍煙油", "飛行", "埋車"]      # 規則 B：命中且視覺側沒有強特徵（沒偵測到東西、或只有中性載具）時，補刀升級成高風險
+VISUAL_CARRIER_ONLY_CLASSES = {"ziplock_bag"}                                    # 規則 B 判定「只有載具」的白名單類別（medical_bottle 已隨 scoring.py 一併移除）
 
 
 def parse_stored_list(details: Optional[str]) -> List[str]:
@@ -28,7 +28,12 @@ def apply_nlp_override(score: int, nlp_keywords: Optional[List[str]], yolo_objec
     """
     給 NLP 團隊的控分覆寫權：
     規則 A（白名單一票否決）：文字側讀到合法商業標籤，不管視覺分數多高都強制壓到低風險。
-    規則 B（黑名單補刀升級）：文字側讀到違禁關鍵字，且視覺側「只」偵測到中性載具（沒有強特徵），強制拉到高風險告警。
+    規則 B（黑名單補刀升級）：文字側讀到違禁關鍵字，且視覺側沒有強特徵佐證時，強制拉到高風險告警。
+        「沒有強特徵」包含兩種情況：YOLO 什麼都沒偵測到（空集合），或只偵測到中性載具
+        （VISUAL_CARRIER_ONLY_CLASSES，目前是 ziplock_bag）。
+        注意：空集合在 Python 是 falsy，若寫成 `objects_set and objects_set.issubset(...)`
+        會導致「YOLO 完全沒抓到東西」這個最該補刀升級的情境反而不觸發規則 B，這裡改用
+        「集合差集是否為空」來判斷，empty set 差集後仍是 empty，自然涵蓋這個情境。
     """
     keywords_text = " ".join(nlp_keywords or []).lower()
 
@@ -36,7 +41,8 @@ def apply_nlp_override(score: int, nlp_keywords: Optional[List[str]], yolo_objec
         return min(score, 15), "NLP_WHITELIST_OVERRIDE"
 
     objects_set = set(yolo_objects or [])
-    if objects_set and objects_set.issubset(VISUAL_CARRIER_ONLY_CLASSES):
+    strong_classes_detected = objects_set - VISUAL_CARRIER_ONLY_CLASSES
+    if not strong_classes_detected:
         if any(term.lower() in keywords_text for term in NLP_BLACKLIST_TERMS):
             return max(score, 85), "NLP_BLACKLIST_OVERRIDE"
 

@@ -63,7 +63,7 @@ try:
 except Exception as e:
     print(f"🚨 [錯誤] OCR 引擎載入失敗，本次啟動將不含文字擷取功能！錯誤: {e}")
 
-# 2. 用「類別名稱」而非數字 ID 對齊 16 個 YOLO 類別，權重與組合加成定義於 ai_model/scoring.py
+# 2. 用「類別名稱」而非數字 ID 對齊 15 個 YOLO 類別，權重與組合加成定義於 ai_model/scoring.py
 # 用名稱比對可以在模型重新訓練、ID 洗牌時依然正確對齊，達成計分邏輯與模型 ID 的解耦。
 
 # 後端同學的接收網址 —— 用環境變數 BACKEND_BASE_URL 覆寫，方便單機測試/跨機測試/未來 docker-compose 切換，
@@ -343,7 +343,7 @@ def background_yolo_and_report(url: str, image_base64: Any, task_id: str, total_
             payload = {
                 "url": url,
                 "risk_score": final_risk_score,
-                "yolo_objects": detected_objects, # 命中的 16 類別英文標籤清單
+                "yolo_objects": detected_objects, # 命中的 15 類別英文標籤清單
                 "class_metadata": batch_class_metadata, # 每個類別獨立的 count / max_confidence，供後端與 NLP 模組過濾使用
                 "processed_images": [],
                 "is_valid_drug": is_valid_drug_payload,

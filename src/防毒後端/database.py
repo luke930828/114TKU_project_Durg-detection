@@ -71,7 +71,7 @@ class AIAnalysisResult(Base):
     
     yolo_details = Column(String(500))
     yolo_score = Column(Integer, default=0)
-    class_metadata = Column(JSON, nullable=True)  # 16 類別各自的 count / max_confidence，來自 api_server.py 的視覺計分模組
+    class_metadata = Column(JSON, nullable=True)  # 15 類別各自的 count / max_confidence，來自 YOLO 服務的視覺計分模組
 
     nlp_details = Column(String(500))
     nlp_score = Column(Integer, default=0)

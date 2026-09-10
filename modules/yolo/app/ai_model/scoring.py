@@ -9,11 +9,11 @@ from typing import Dict, Iterable, Optional, Tuple, TypedDict
 
 MAX_VISUAL_SCORE = 100
 
-# 16 個 YOLO 類別基礎權重
+# 15 個 YOLO 類別基礎權重（v3：拿掉 medical_bottle —— 外觀差異過大、實務上樣本稀少，
+# 且經比對毒品網站實拍圖，載具本身幾乎不影響定調，真正的判斷依據還是大麻 logo 等強特徵類別）
 CLASS_WEIGHTS: Dict[str, int] = {
     # 高風險群 (70~90)
     "cannabis_logo": 80,
-    "illicit_packaging": 80,
     "magic_mushroom": 80,
     "botanical_joints": 85,
     "cannabis_like_herbal": 80,
@@ -26,20 +26,39 @@ CLASS_WEIGHTS: Dict[str, int] = {
     # 通用載具/低風險群 (10~30)
     "drug_edible": 20,
     "digital_scale": 20,
+    # illicit_packaging：原本歸在高風險群，但實務上大多標註的是毒咖啡包 / edible 旁邊的包裝，
+    # 外觀特徵不夠獨特，很容易對一般零食包裝誤判，因此降到低分群，靠跟其他強特徵類別同框的組合加成拉高分數
+    "illicit_packaging": 20,
     "ziplock_bag": 15,
-    "medical_bottle": 15,
     "pills_capsules": 15,
     "pills_tablets": 15,
 }
 
-# 組合加成：同圖出現特定類別組合時觸發乘數，多組命中取最大的單一乘數（不疊加）
+# 「毒品本體／可疑載具」類別：跟 digital_scale 同框時代表「秤重」情境成立，
+# 不限定特定的粉/結晶/植物種類配對——只要是這個類別集合裡的任何一種都算數
+CONTROLLED_SUBSTANCE_CLASSES = frozenset({
+    "substance_crystal",
+    "substance_powder",
+    "magic_mushroom",
+    "cannabis_like_herbal",
+    "botanical_joints",
+    "ziplock_bag",
+})
+
+# 組合加成（固定配對）：同圖出現特定類別組合時觸發乘數，多組命中取最大的單一乘數（不疊加）
 COMBO_MULTIPLIERS: Tuple[Tuple[frozenset, float], ...] = (
     (frozenset({"drug_edible", "cannabis_logo"}), 2.5),
     (frozenset({"vape_cartridge", "cannabis_logo"}), 2.5),
     (frozenset({"vape_device", "cannabis_logo"}), 2.5),
     (frozenset({"ziplock_bag", "substance_powder"}), 2.0),
     (frozenset({"ziplock_bag", "substance_crystal"}), 2.0),
-    (frozenset({"digital_scale", "ziplock_bag"}), 2.0),
+)
+
+# 組合加成（類別型）：anchor 類別 + category 集合裡任一成員同框就觸發，不用窮舉每一種配對。
+# 目前只有 digital_scale 用這個規則：電子秤配粉、結晶、香菇、植株等都很常見，
+# 之前寫死成 (digital_scale, ziplock_bag) 這單一配對，遇到「電子秤+結晶」但沒有夾鏈袋就抓不到加成。
+CATEGORY_COMBO_RULES: Tuple[Tuple[str, frozenset, float], ...] = (
+    ("digital_scale", CONTROLLED_SUBSTANCE_CLASSES, 2.0),
 )
 
 
@@ -73,10 +92,21 @@ def compute_combo_multiplier(present_classes: Iterable[str]) -> Tuple[float, Opt
     present = set(present_classes)
     best_multiplier = 1.0
     best_combo = None
+
     for combo, multiplier in COMBO_MULTIPLIERS:
         if multiplier > best_multiplier and combo.issubset(present):
             best_multiplier = multiplier
             best_combo = combo
+
+    # 類別型規則：anchor 類別本身要出現，且 category 集合裡至少命中一個成員
+    for anchor, category, multiplier in CATEGORY_COMBO_RULES:
+        if multiplier <= best_multiplier or anchor not in present:
+            continue
+        hit_members = category & present
+        if hit_members:
+            best_multiplier = multiplier
+            best_combo = frozenset({anchor}) | hit_members
+
     return best_multiplier, best_combo
 
 
