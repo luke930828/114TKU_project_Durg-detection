@@ -46,8 +46,14 @@ class TrainConfig:
     name: str = "drug_prevention_v3_15class"      # 這次實驗的名稱；v2 是 16 類（含 medical_bottle）的舊紀錄，
                                                    # 類別數不同不能 resume，故意換新名字避免覆蓋掉 v2 的歷史紀錄
     exist_ok: bool = True                        # 名稱重複時直接覆蓋
-    deploy_dir: Path = Path("models")            # 最終權重要部署到哪個資料夾
-    deploy_filename: str = "best.pt"             # api_server.py 實際載入的檔名
+    # 最終權重要部署到哪個資料夾——一定要對齊 modules/yolo/app/main.py 實際載入模型的路徑
+    # （main.py 用 Path(__file__).parent / "models" / "best.pt" 定位，__file__ 就是
+    # modules/yolo/app/main.py，所以正確位置是 modules/yolo/app/models/，不是專案根目錄的 models/）。
+    # 之前 YOLO 服務搬進 modules/yolo/ 那次重構（commit 23b6717）忘記同步這裡，
+    # 導致訓練部署一直寫到沒人讀的舊路徑，Docker image 打包時 COPY app/ 也只會抓
+    # modules/yolo/app/models/ 這份，2026-09-10 發現後修正。
+    deploy_dir: Path = Path("modules/yolo/app/models")
+    deploy_filename: str = "best.pt"             # main.py 實際載入的檔名
     low_sample_threshold: int = 100              # 訓練集裡樣本數低於此值的類別，開訓前會被列為警示
     resume: bool = False                         # True 時接續 runs/detect/<name>/weights/last.pt 繼續跑，
                                                   # 而不是從 base_model 重新開始（optimizer 狀態、LR 排程、epoch 計數都會照舊接續）
